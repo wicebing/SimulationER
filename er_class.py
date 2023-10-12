@@ -1,26 +1,65 @@
 import random
 import csv
+from datetime import datetime
 
+
+from datetime import datetime
 
 class Patient:
     patient_counter = 0  # This is a class-level variable
+    DEFAULT_BLOOD_VALUES = {
+        'Monday': {
+            '00:00-01:00': {'med': 30, 'trauma': 50},
+            # ... and so on for each hour and day
+        },
+        # ...
+    }
+    DEFAULT_DISEASE_INCREASE_RATES = {
+        'Monday': {
+            '00:00-01:00': {'med': 1, 'trauma': 2},
+            # ... and so on for each hour and day
+        },
+        # ...
+    }
     
-    def __init__(self, arrival_time, patient_type):
-        Patient.patient_counter += 1  # Increment the counter
-        self.num = Patient.patient_counter  # Assign the current counter value to the patient
+    def __init__(self, arrival_time, patient_type, boarding_blood=None, disease_blood=None, departure_blood=10):
+        Patient.patient_counter += 1
+        self.num = Patient.patient_counter
         
         self.arrival_time = arrival_time
-        self.triage_time = None
-        self.boarding_time = None
-        self.departure_time = None
-        self.status = 'triage'  # or 'on_board', 'departure'
+        day_of_week = datetime.strptime(arrival_time, "%Y-%m-%d %H:%M:%S").strftime('%A')
+        hour_of_day = datetime.strptime(arrival_time, "%Y-%m-%d %H:%M:%S").strftime('%H:00-%H:59')
+        
+        self.patient_type = patient_type
+        self.boarding_blood = boarding_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]
+        self.disease_blood = disease_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]
+        self.departure_blood = departure_blood
+        
+        self.status = 'triage'
         self.discharge_status = False
-        self.patient_type = patient_type  # 'med' or 'trauma'
-        self.boarding_blood = 30  # initial value, you can adjust this
-        self.disease_blood = 100  # initial value
-        self.departure_blood = 10  # initial value
         self.assigned_physician = None
+        
+        self.disease_increase_rate = Patient.DEFAULT_DISEASE_INCREASE_RATES[day_of_week][hour_of_day][patient_type]
 
+    def update_disease_blood(self, elapsed_time):
+        if self.disease_blood > 0:
+            self.disease_blood += self.disease_increase_rate * elapsed_time
+
+    @classmethod
+    def load_defaults_from_csv(cls, csv_file_path):
+        with open(csv_file_path, mode='r') as csv_file:
+            csv_reader = csv.reader(csv_file)
+            next(csv_reader)  # Skip the header row
+            for row in csv_reader:
+                day, hour, patient_type, blood_value, increase_rate = row
+                cls.DEFAULT_BLOOD_VALUES.setdefault(day, {}).setdefault(hour, {})[patient_type] = int(blood_value)
+                cls.DEFAULT_DISEASE_INCREASE_RATES.setdefault(day, {}).setdefault(hour, {})[patient_type] = int(increase_rate)
+    '''
+    CSV file should be structured as follows:
+    day,hour,patient_type,blood_value,increase_rate
+    Monday,00:00-01:00,med,30,1
+    Monday,00:00-01:00,trauma,50,2
+    '''
 
 class Physician:
     used_names = set()  # This is a class-level set to store used names
@@ -51,17 +90,28 @@ class Physician:
             for row in csv_reader:
                 hour, med_mojo, trauma_mojo = row
                 self.abilities[hour] = {'med': int(med_mojo), 'trauma': int(trauma_mojo)}
-
+    '''
+    CSV file should be structured as follows:
+    hour,med,trauma
+    00:00-01:00,5,7
+    01:00-02:00,5,7
+    '''
 
 
 
 class ShiftType:
+    used_names = set()  # This is a class-level set to store used names
+    
     def __init__(self, name, start_time, end_time, new_patient=True):
+        if name in ShiftType.used_names:
+            raise ValueError(f"The name '{name}' is already in use. Please choose a different name.")
         self.name = name
+        ShiftType.used_names.add(name)  # Add the name to the set of used names
+        
         self.start_time = start_time
         self.end_time = end_time
         self.new_patient = new_patient
-        self.assigned_physicians = []
+
 
 class ERSimulation:
     def __init__(self, monthly_patient_count, med_to_trauma_ratio, hourly_range):
