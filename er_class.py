@@ -35,13 +35,11 @@ def generate_physician_default_csv(filename="physician_default.csv"):
     
     with open(filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["day", "hour", "patient_type", "ability_value"])
-        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        writer.writerow(["hour", "med", "trauma"])
         hours = ["{:02d}:00-{:02d}:00".format(i, i+1) for i in range(24)]
-        for day in days:
-            for hour in hours:
-                writer.writerow([day, hour, "med", 5])
-                writer.writerow([day, hour, "trauma", 7])
+        for hour in hours:
+            writer.writerow([hour, 5, 7])
+
 
 def generate_ersimulation_default_csv(filename="ersimulation_default.csv"):
     # Check if directory exists, if not create it
@@ -221,18 +219,42 @@ class ERSimulation:
         for hour, (min_val, max_val) in self.hourly_range.items():
             self.hourly_range[hour] = (int(min_val * scaling_factor), int(max_val * scaling_factor))
 
-    def create_physician(self, name, abilities):
+    def create_physician(self, name, abilities=None):
         physician = Physician(name, abilities)
         self.physicians.append(physician)
 
-    def create_physicians_from_csvs(csv_file_paths):
-        physicians = []
+        # Save to CSV
+        self.save_physician_to_csv(physician)
+
+    def save_physician_to_csv(self, physician):
+        # Ensure the directory exists
+        directory = "./settings/physicians"
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        # File path for the physician
+        csv_file_path = os.path.join(directory, f"{physician.name}.csv")
+
+        # Check if the file already exists
+        if os.path.isfile(csv_file_path):
+            print(f"{csv_file_path} already exists. Skipping saving...")
+            return
+
+        # Save the physician's abilities to the CSV
+        with open(csv_file_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(["hour", "med", "trauma"])
+            for hour, abilities in physician.abilities.items():
+                med_ability = abilities.get('med', 0)
+                trauma_ability = abilities.get('trauma', 0)
+                writer.writerow([hour, med_ability, trauma_ability])
+
+    def create_physicians_from_csvs(self, csv_file_paths):
         for csv_file_path in csv_file_paths:
             name = csv_file_path.split('.')[0]  # Use the filename (without extension) as the physician's name
             physician = Physician(name)
             physician.set_abilities_from_csv(csv_file_path)
-            physicians.append(physician)
-        return physicians
+            self.physicians.append(physician)
 
     def create_shift_type(self, name, start_time, end_time, new_patient=True):
         shift_type = ShiftType(name, start_time, end_time, new_patient)
