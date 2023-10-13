@@ -1,15 +1,78 @@
-import random
-import csv
+import random, os, csv
 from datetime import datetime
 
+def generate_patient_default_csv(filename="patient_default.csv"):
+    # Check if directory exists, if not create it
+    directory = os.path.dirname(filename)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
-from datetime import datetime
+    # Check if the file already exists
+    if os.path.isfile(filename):
+        print(f"{filename} already exists. Skipping...")
+        return
+
+    with open(filename, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["day", "hour", "patient_type", "boarding_blood", "disease_blood", "departure_blood", "increase_rate"])
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        hours = ["{:02d}:00-{:02d}:00".format(i, i+1) for i in range(24)]
+        for day in days:
+            for hour in hours:
+                writer.writerow([day, hour, "med", 30, 100, 10, 1])
+                writer.writerow([day, hour, "trauma", 50, 150, 15, 2])
+
+def generate_physician_default_csv(filename="physician_default.csv"):
+    # Check if directory exists, if not create it
+    directory = os.path.dirname(filename)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    # Check if the file already exists
+    if os.path.isfile(filename):
+        print(f"{filename} already exists. Skipping...")
+        return
+    
+    with open(filename, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["day", "hour", "patient_type", "ability_value"])
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        hours = ["{:02d}:00-{:02d}:00".format(i, i+1) for i in range(24)]
+        for day in days:
+            for hour in hours:
+                writer.writerow([day, hour, "med", 5])
+                writer.writerow([day, hour, "trauma", 7])
+
+def generate_ersimulation_default_csv(filename="ersimulation_default.csv"):
+    # Check if directory exists, if not create it
+    directory = os.path.dirname(filename)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    # Check if the file already exists
+    if os.path.isfile(filename):
+        print(f"{filename} already exists. Skipping...")
+        return
+    
+    with open(filename, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["hour", "min_patients", "max_patients"])
+        hours = ["{:02d}:00-{:02d}:00".format(i, i+1) for i in range(24)]
+        for hour in hours:
+            writer.writerow([hour, 5, 10])
+
+generate_patient_default_csv("settings/patient_default.csv")
+generate_physician_default_csv("settings/physician_default.csv")
+generate_ersimulation_default_csv("settings/ersimulation_default.csv")
 
 class Patient:
     patient_counter = 0  # This is a class-level variable
     DEFAULT_BLOOD_VALUES = {
         'Monday': {
-            '00:00-01:00': {'med': 30, 'trauma': 50},
+            '00:00-01:00': {
+                'med': {'boarding': 30, 'disease': 100, 'departure': 10},
+                'trauma': {'boarding': 50, 'disease': 150, 'departure': 15}
+            },
             # ... and so on for each hour and day
         },
         # ...
@@ -51,9 +114,15 @@ class Patient:
             csv_reader = csv.reader(csv_file)
             next(csv_reader)  # Skip the header row
             for row in csv_reader:
-                day, hour, patient_type, blood_value, increase_rate = row
-                cls.DEFAULT_BLOOD_VALUES.setdefault(day, {}).setdefault(hour, {})[patient_type] = int(blood_value)
+                day, hour, patient_type, boarding_value, disease_value, departure_value, increase_rate = row
+                blood_values = {
+                    'boarding': int(boarding_value),
+                    'disease': int(disease_value),
+                    'departure': int(departure_value)
+                }
+                cls.DEFAULT_BLOOD_VALUES.setdefault(day, {}).setdefault(hour, {})[patient_type] = blood_values
                 cls.DEFAULT_DISEASE_INCREASE_RATES.setdefault(day, {}).setdefault(hour, {})[patient_type] = int(increase_rate)
+
     '''
     CSV file should be structured as follows:
     day,hour,patient_type,blood_value,increase_rate
@@ -114,14 +183,43 @@ class ShiftType:
 
 
 class ERSimulation:
-    def __init__(self, monthly_patient_count, med_to_trauma_ratio, hourly_range):
+    def __init__(self, monthly_patient_count, med_to_trauma_ratio, csv_file_path=None):
         self.monthly_patient_count = monthly_patient_count
         self.med_to_trauma_ratio = med_to_trauma_ratio
-        self.hourly_range = hourly_range  # a dictionary like {'00:00-01:00': (5,10), ...}
+        if csv_file_path:
+            self.load_hourly_range_from_csv(csv_file_path)
+            self.adjust_hourly_range()
+        else:
+            self.hourly_range = {}  # Default empty dictionary or some default values
         self.current_time = 0
         self.patients = []
         self.physicians = []
         self.shift_types = []
+
+    def load_hourly_range_from_csv(self, csv_file_path):
+        with open(csv_file_path, mode='r') as csv_file:
+            csv_reader = csv.reader(csv_file)
+            next(csv_reader)  # Skip the header row
+            hourly_range = {}
+            for row in csv_reader:
+                hour, min_patients, max_patients = row
+                hourly_range[hour] = (int(min_patients), int(max_patients))
+        self.hourly_range = hourly_range
+
+    # structure of the CSV file should be:
+    # hour,min_patients,max_patients
+    # 00:00-01:00,5,10
+    # 01:00-02:00,5,10
+    # ...    
+
+    def adjust_hourly_range(self):
+        # Calculate the scaling factor
+        total_patients_in_hourly_range = sum([max_val for _, max_val in self.hourly_range.values()])
+        scaling_factor = self.monthly_patient_count / (total_patients_in_hourly_range * 30)  # Assuming a month is roughly 30 days
+
+        # Adjust the hourly range
+        for hour, (min_val, max_val) in self.hourly_range.items():
+            self.hourly_range[hour] = (int(min_val * scaling_factor), int(max_val * scaling_factor))
 
     def create_physician(self, name, abilities):
         physician = Physician(name, abilities)
