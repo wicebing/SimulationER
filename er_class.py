@@ -1,5 +1,5 @@
-import random, os, csv
-from datetime import datetime
+import random, os, csv, threading, time
+from datetime import datetime, timedelta
 
 def generate_patient_default_csv(filename="patient_default.csv"):
     # Check if directory exists, if not create it
@@ -106,6 +106,31 @@ class Patient:
         if self.disease_blood > 0:
             self.disease_blood += self.disease_increase_rate * elapsed_time
 
+    def update_blood_and_status(self, elapsed_time, current_time):
+        # Update disease blood based on elapsed time
+        self.update_disease_blood(elapsed_time)
+        
+        # Assuming the physician's mojo is a number indicating how much blood is reduced per second
+        if self.assigned_physician:
+            mojo = self.assigned_physician.get_mojo(self.patient_type, current_time)
+            blood_reduction = mojo * elapsed_time  #  elapsed_time is in minutes
+            
+            if self.boarding_blood > 0:
+                self.boarding_blood -= blood_reduction
+            elif self.disease_blood > 0:
+                self.disease_blood -= blood_reduction
+            elif self.departure_blood > 0:
+                self.departure_blood -= blood_reduction
+
+        # Update patient's status based on blood values
+        if self.boarding_blood <= 0:
+            self.status = 'on-board'
+        if self.disease_blood <= 0:
+            self.status = 'wait-depart'
+        if self.departure_blood <= 0:
+            self.status = 'discharge'
+            self.discharge_status = True
+
     @classmethod
     def load_defaults_from_csv(cls, csv_file_path):
         with open(csv_file_path, mode='r') as csv_file:
@@ -157,6 +182,22 @@ class Physician:
             for row in csv_reader:
                 hour, med_mojo, trauma_mojo = row
                 self.abilities[hour] = {'med': int(med_mojo), 'trauma': int(trauma_mojo)}
+
+    def get_mojo(self, patient_type, current_time):
+        """
+        Get the mojo of the physician based on the patient type and current time.
+        
+        Parameters:
+        - patient_type: 'med' or 'trauma'
+        - current_time: The current time in the simulation as a datetime object
+        
+        Returns:
+        - The mojo value
+        """
+        hour_of_day = current_time.strftime('%H:00-%H:59')
+        
+        return self.abilities.get(hour_of_day, {}).get(patient_type, 0)
+
     '''
     CSV file should be structured as follows:
     hour,med,trauma
@@ -181,7 +222,12 @@ class ShiftType:
 
 
 class ERSimulation:
-    def __init__(self, monthly_patient_count, med_to_trauma_ratio, csv_file_path=None):
+    def __init__(self, 
+                 start_datetime, 
+                 end_datetime, 
+                 monthly_patient_count, 
+                 med_to_trauma_ratio, 
+                 csv_file_path=None):
         self.monthly_patient_count = monthly_patient_count
         self.med_to_trauma_ratio = med_to_trauma_ratio
         if csv_file_path:
@@ -193,6 +239,54 @@ class ERSimulation:
         self.patients = []
         self.physicians = []
         self.shift_types = []
+        self.start_datetime = datetime.strptime(start_datetime, "%Y-%m-%d %H:%M:%S")
+        self.end_datetime = datetime.strptime(end_datetime, "%Y-%m-%d %H:%M:%S")
+        self.current_time = self.start_datetime
+        self.time_speed = 1  # Default is real-time
+        self.running = False
+        self.patient_records = [] 
+
+    def start(self):
+        self.running = True
+        while self.running and self.current_time <= self.end_datetime:
+            self.current_time += timedelta(minutes=1 * self.time_speed)
+            time.sleep(1)  # Sleep for 1 real-world second
+            
+            discharged_patients = []  # List to store patients who have been discharged this iteration
+            for patient in self.patients:
+                self.record_patient_process(patient)
+                patient.update_blood_and_status(self.time_speed, self.current_time)
+                if patient.discharge_status:
+                    discharged_patients.append(patient)
+                
+            # Remove discharged patients from the active patient list
+            for patient in discharged_patients:
+                self.patients.remove(patient)
+                del patient  # Explicitly delete the patient object
+
+    def stop(self):
+        self.running = False
+
+    def record_patient_process(self, patient):
+        """
+        Record the process of a patient at the current time.
+        """
+        record = {
+            'Patient_num': patient.num,
+            'Arrival_time': patient.arrival_time,
+            'Patient_type': patient.patient_type,
+            'Boarding_blood': patient.boarding_blood,
+            'Disease_blood': patient.disease_blood,
+            'Departure_blood': patient.departure_blood,
+            'Status': patient.status,
+            'Assigned_physician': patient.assigned_physician.name if patient.assigned_physician else None,
+            'Timestamp': self.current_time
+        }
+        self.patient_records.append(record)
+
+    def generate_patient_chart(self):
+        # Return a table (list of dictionaries) showing each patient's journey
+        return self.patient_records
 
     def load_hourly_range_from_csv(self, csv_file_path):
         with open(csv_file_path, mode='r') as csv_file:
