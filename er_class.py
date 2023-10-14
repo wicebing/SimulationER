@@ -442,7 +442,7 @@ class ERSimulation:
                     
                     # Assign the new physician to the patient
                     patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
-                    print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift_name}.")
+                    print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
 
     def record_patient_process(self, patient):
         """
