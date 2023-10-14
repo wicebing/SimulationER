@@ -1,5 +1,6 @@
 import random, os, csv, threading, time, glob
 from datetime import datetime, timedelta
+import numpy as np
 
 def generate_patient_default_csv(filename="patient_default.csv"):
     # Check if directory exists, if not create it
@@ -255,7 +256,7 @@ class ShiftType:
         """Determine which shift to hand off a patient based on their arrival time."""
         if self.shift_rule.get('no_division'):
             return random.choice(self.shift_rule['no_division'])
-        if arrival_datetime.time() < time(23, 59) and arrival_datetime.date() == current_time.date():
+        if arrival_datetime.date() < current_time.date():
             return random.choice(self.shift_rule['before_midnight'])
         else:
             return random.choice(self.shift_rule['after_midnight'])
@@ -265,10 +266,10 @@ class ERSimulation:
     def __init__(self, 
                  start_datetime, 
                  end_datetime, 
-                 monthly_patient_count, 
+                 daily_patient_count,
                  med_to_trauma_ratio, 
                  csv_file_path=None):
-        self.monthly_patient_count = monthly_patient_count
+        self.daily_patient_count = daily_patient_count
         self.med_to_trauma_ratio = med_to_trauma_ratio
         if csv_file_path:
             self.load_hourly_range_from_csv(csv_file_path)
@@ -425,7 +426,10 @@ class ERSimulation:
                     new_shift_name = shift.get_handoff_shift(patient.arrival_time, self.current_time)
                     
                     # Find the physician for the new shift from the working schedule
-                    new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift_name)
+                    if new_shift_name.end_day_offset == 0:
+                        new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift_name)
+                    else:
+                        new_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(new_shift_name)
                     
                     # Assign the new physician to the patient
                     patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
@@ -491,7 +495,7 @@ class ERSimulation:
     def adjust_hourly_range(self):
         # Calculate the scaling factor
         total_patients_in_hourly_range = sum([max_val for _, max_val in self.hourly_range.values()])
-        scaling_factor = self.monthly_patient_count / (total_patients_in_hourly_range * 30)  # Assuming a month is roughly 30 days
+        scaling_factor = self.daily_patient_count / (total_patients_in_hourly_range)  # Assuming a month is roughly 30 days
 
         # Adjust the hourly range
         for hour, (min_val, max_val) in self.hourly_range.items():
@@ -540,11 +544,46 @@ class ERSimulation:
         self.shift_types.append(shift_type)
 
     def patient_arrival(self):
-        patient_type = 'med' if random.random() < self.med_to_trauma_ratio else 'trauma'
-        arrival_time = self.current_time
-        patient = Patient(arrival_time, patient_type)
-        self.patients.append(patient)
-        print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}.")
+        current_hour_str = f"{self.current_time.hour:02d}:00-{(self.current_time.hour + 1) % 24:02d}:00"
+        min_patients, max_patients = self.hourly_range.get(current_hour_str, (0, 0))
+
+        # Calculate the average expected number of arrivals for the current minute
+        average_arrivals_this_minute = (max_patients - min_patients) / 60.0 + min_patients / 60.0
+
+        # Use the Poisson distribution to get a random number of arrivals for this minute
+        num_arrivals = np.random.poisson(average_arrivals_this_minute)
+
+        for _ in range(num_arrivals):
+            patient_type = 'med' if random.random() < self.med_to_trauma_ratio else 'trauma'
+            arrival_time = self.current_time
+            patient = Patient(arrival_time, patient_type)
+            self.patients.append(patient)
+
+            # Determine the current shift based on the current_time
+            current_shifts = [shift for shift in self.shift_types if shift.new_patient and shift.is_time_within_shift(self.current_time.time())]
+
+            # If there are no shifts available for new patients, we can't assign a physician
+            if not current_shifts:
+                print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}, but no available shifts for new patients.")
+                continue
+
+            # Randomly select one of the current shifts
+            selected_shift = random.choice(current_shifts)
+
+            # Get the physician assigned to that shift from the working schedule
+            if selected_shift.end_day_offset ==0:
+                assigned_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(selected_shift.name)
+            else:
+                assigned_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(selected_shift.name)
+
+            # Find the physician object based on the name
+            assigned_physician = next((physician for physician in self.physicians if physician.name == assigned_physician_name), None)
+            
+            # Assign the patient to the physician
+            patient.assigned_physician = assigned_physician
+            print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type} and was assigned to {assigned_physician.name}.")
+
+
 
     def physician_treat_patient(self, physician):
         # ... logic to choose a patient based on priority
@@ -557,7 +596,8 @@ class ERSimulation:
 
 
 if __name__ == '__main__':
-    er=ERSimulation("2023-03-01 08:00:00", "2023-03-03 08:00:00", 200, 0.2, "settings/ersimulation_default.csv")
+    er=ERSimulation("2023-03-01 08:00:00", "2023-03-03 07:59:00", 200, 0.2, "settings/ersimulation_default.csv")
+    er.set_time_speed(4)
     er.create_physician("DrA")
     er.create_physician("DrB")
     er.create_physician("DrC")
@@ -576,9 +616,11 @@ if __name__ == '__main__':
     er.shift_types[3].set_shift_rule(['an'],['an'],['an'])
 
     er.create_working_schedule()
-    er.save_working_schedule_to_csv()
+    # er.save_working_schedule_to_csv()
 
-    input("Please complete the schedule CSV and press Enter to continue...")
+    # input("Please complete the schedule CSV and press Enter to continue...")
     er.load_working_schedule_from_csv()
     Patient.load_defaults_from_csv('./settings/patient_default.csv')
+    
+    er.start()
 
