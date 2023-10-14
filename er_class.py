@@ -1,4 +1,4 @@
-import random, os, csv, threading, time
+import random, os, csv, threading, time, glob
 from datetime import datetime, timedelta
 
 def generate_patient_default_csv(filename="patient_default.csv"):
@@ -16,7 +16,7 @@ def generate_patient_default_csv(filename="patient_default.csv"):
         writer = csv.writer(file)
         writer.writerow(["day", "hour", "patient_type", "boarding_blood", "disease_blood", "departure_blood", "increase_rate"])
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        hours = ["{:02d}:00-{:02d}:00".format(i, i+1) for i in range(24)]
+        hours = ["{:02d}:00-{:02d}:59".format(i, i) for i in range(24)]
         for day in days:
             for hour in hours:
                 writer.writerow([day, hour, "med", 30, 100, 10, 1])
@@ -88,13 +88,13 @@ class Patient:
         self.num = Patient.patient_counter
         
         self.arrival_time = arrival_time
-        day_of_week = datetime.strptime(arrival_time, "%Y-%m-%d %H:%M:%S").strftime('%A')
-        hour_of_day = datetime.strptime(arrival_time, "%Y-%m-%d %H:%M:%S").strftime('%H:00-%H:59')
+        day_of_week = arrival_time.strftime('%A')
+        hour_of_day = arrival_time.strftime('%H:00-%H:59')
         
         self.patient_type = patient_type
-        self.boarding_blood = boarding_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]
-        self.disease_blood = disease_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]
-        self.departure_blood = departure_blood
+        self.boarding_blood = boarding_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['boarding']
+        self.disease_blood = disease_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['disease']
+        self.departure_blood = departure_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['departure']
         
         self.status = 'triage'
         self.discharge_status = False
@@ -275,7 +275,6 @@ class ERSimulation:
             self.adjust_hourly_range()
         else:
             self.hourly_range = {}  # Default empty dictionary or some default values
-        self.current_time = 0
         self.patients = []
         self.physicians = []
         self.shift_types = []
@@ -315,11 +314,15 @@ class ERSimulation:
         for shift in self.shift_types:
             if not shift.shift_rule:
                 raise RuntimeError(f"ShiftType '{shift.name}' does not have a handoff rule set.")
- 
+
+        if not hasattr(self, 'working_schedule') or not self.working_schedule:
+            raise RuntimeError("Please create a working schedule before starting the simulation.")
+
         self.running = True
         while self.running and self.current_time <= self.end_datetime:
             frame_duration = 1 / (ERSimulation.FRAME_RATE * self.time_speed)  # duration of a frame in real-world seconds
             self.current_time += timedelta(minutes=1)
+            print(self.current_time)
 
             # Check for shift change and handoff patients
             self.check_shift_change_and_handoff()
@@ -340,9 +343,12 @@ class ERSimulation:
                 del patient  # Explicitly delete the patient object
                 
             time.sleep(frame_duration)
+        self.running = False
+        print("Simulation ending.")
 
     def stop(self):
         self.running = False
+        print("Simulation ending.")
 
     def create_working_schedule(self):
         if not self.shift_types:
@@ -413,14 +419,17 @@ class ERSimulation:
         """Check if the current time matches any ShiftType end time and handle patient handoff."""
         for shift in self.shift_types:
             if self.current_time.time() == shift.end_time:  # Shift end time reached
-                handoff_shifts = shift.get_handoff_shift(self.current_time)
-                
+                print(f"Shift {shift.name} ending at {self.current_time}.")              
                 for patient in self.patients:
-                    # Randomly assign patients to the available shifts
-                    new_shift = random.choice(handoff_shifts)
-                    # Logic to transfer patient to the new shift goes here. This can be as simple as updating a property 
-                    # on the patient object, or more complex if there's more to the handoff process.
-                    patient.assigned_shift = new_shift  # This assumes the Patient class has an 'assigned_shift' attribute
+                    # Determine the next shift based on the handoff rule
+                    new_shift_name = shift.get_handoff_shift(patient.arrival_time, self.current_time)
+                    
+                    # Find the physician for the new shift from the working schedule
+                    new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift_name)
+                    
+                    # Assign the new physician to the patient
+                    patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
+                    print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift_name}.")
 
     def record_patient_process(self, patient):
         """
@@ -518,9 +527,10 @@ class ERSimulation:
                 trauma_ability = abilities.get('trauma', 0)
                 writer.writerow([hour, med_ability, trauma_ability])
 
-    def create_physicians_from_csvs(self, csv_file_paths):
+    def create_physicians_from_csvs(self, file_paths):
+        csv_file_paths = glob.glob(os.path.join(file_paths,'*.csv'))
         for csv_file_path in csv_file_paths:
-            name = csv_file_path.split('.')[0]  # Use the filename (without extension) as the physician's name
+            name = os.path.basename(csv_file_path).split('.')[0]  # Use the filename (without extension) as the physician's name
             physician = Physician(name)
             physician.set_abilities_from_csv(csv_file_path)
             self.physicians.append(physician)
@@ -534,6 +544,7 @@ class ERSimulation:
         arrival_time = self.current_time
         patient = Patient(arrival_time, patient_type)
         self.patients.append(patient)
+        print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}.")
 
     def physician_treat_patient(self, physician):
         # ... logic to choose a patient based on priority
@@ -544,4 +555,30 @@ class ERSimulation:
 
 
 
+
+if __name__ == '__main__':
+    er=ERSimulation("2023-03-01 08:00:00", "2023-03-03 08:00:00", 200, 0.2, "settings/ersimulation_default.csv")
+    er.create_physician("DrA")
+    er.create_physician("DrB")
+    er.create_physician("DrC")
+    er.create_physician("DrD")
+    er.create_physician("DrE")
+    er.create_physician("DrF")
+
+    er.create_shift_type('a','08:00','20:00')
+    er.create_shift_type('b','08:00','20:00')
+    er.create_shift_type('an','20:00','08:00')
+    er.create_shift_type('e','08:00','20:00')
+
+    er.shift_types[0].set_shift_rule(['an'],['an'],['an'])
+    er.shift_types[1].set_shift_rule(['an'],['an'],['an'])
+    er.shift_types[2].set_shift_rule(['e'],['a','b'])
+    er.shift_types[3].set_shift_rule(['an'],['an'],['an'])
+
+    er.create_working_schedule()
+    er.save_working_schedule_to_csv()
+
+    input("Please complete the schedule CSV and press Enter to continue...")
+    er.load_working_schedule_from_csv()
+    Patient.load_defaults_from_csv('./settings/patient_default.csv')
 
