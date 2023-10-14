@@ -627,7 +627,7 @@ if __name__ == '__main__':
     er.create_shift_type('a','08:00','20:00')
     er.create_shift_type('b','08:00','20:00')
     er.create_shift_type('an','20:00','08:00')
-    er.create_shift_type('e','08:00','20:00')
+    er.create_shift_type('e','08:00','20:00', False)
 
     er.shift_types[0].set_shift_rule(['an'],['an'],['an'])
     er.shift_types[1].set_shift_rule(['an'],['an'],['an'])
