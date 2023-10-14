@@ -205,23 +205,63 @@ class Physician:
     01:00-02:00,5,7
     '''
 
-
-
 class ShiftType:
     used_names = set()  # This is a class-level set to store used names
     
-    def __init__(self, name, start_time, end_time, new_patient=True):
+    def __init__(self, name, start_time_str, end_time_str, new_patient=True):
         if name in ShiftType.used_names:
             raise ValueError(f"The name '{name}' is already in use. Please choose a different name.")
         self.name = name
         ShiftType.used_names.add(name)  # Add the name to the set of used names
         
-        self.start_time = start_time
-        self.end_time = end_time
+        self.start_time = self._convert_to_time(start_time_str)
+        self.end_time = self._convert_to_time(end_time_str)
+        
+        # Determine the end_day_offset
+        if self.end_time <= self.start_time:
+            self.end_day_offset = 1
+        else:
+            self.end_day_offset = 0
+        
         self.new_patient = new_patient
+        self.shift_rule = None  # Initial rule is None
 
+
+    def _convert_to_time(self, time_str):
+        """Convert a string in HH:MM format to a time object."""
+        return datetime.strptime(time_str, "%H:%M").time()
+
+    def is_time_within_shift(self, check_time):
+        """Check if a given time is within the shift's start and end times."""
+        if self.end_day_offset == 0:
+            return self.start_time <= check_time <= self.end_time
+        # For shifts that span midnight
+        return check_time >= self.start_time or check_time <= self.end_time
+
+    def set_shift_rule(self, before_midnight_shifts, after_midnight_shifts, no_division=None):
+        """Set the handoff rule for this shift.
+        
+        Parameters:
+        - before_midnight_shifts: List of shift names to hand off patients arriving before midnight.
+        - after_midnight_shifts: List of shift names to hand off patients arriving after midnight.
+        """
+        self.shift_rule = {
+            'before_midnight': before_midnight_shifts,
+            'after_midnight': after_midnight_shifts,
+            'no_division': no_division
+        }
+    
+    def get_handoff_shift(self, arrival_datetime, current_time):
+        """Determine which shift to hand off a patient based on their arrival time."""
+        if self.shift_rule.get('no_division'):
+            return random.choice(self.shift_rule['no_division'])
+        if arrival_datetime.time() < time(23, 59) and arrival_datetime.date() == current_time.date():
+            return random.choice(self.shift_rule['before_midnight'])
+        else:
+            return random.choice(self.shift_rule['after_midnight'])
 
 class ERSimulation:
+    FRAME_RATE = 100  # Default frame rate is 100 frames per second
     def __init__(self, 
                  start_datetime, 
                  end_datetime, 
@@ -244,13 +284,48 @@ class ERSimulation:
         self.current_time = self.start_datetime
         self.time_speed = 1  # Default is real-time
         self.running = False
-        self.patient_records = [] 
+        self.patient_records = {} 
+
+    def set_time_speed(self, speed):
+        """
+        Set the time speed of the simulation.
+
+        Parameters:
+        - speed: an integer. 
+                 0 is default speed (100 frames/second).
+                 Positive values speed up time (e.g., 4 means 500 frames/second).
+                 Negative values slow down time (e.g., -4 means 20 frames/second).
+        """
+        if speed > 4 or speed < -4:
+            raise ValueError("Speed should be between -4 and 4.")
+
+        if speed == 0:
+            self.time_speed = 1
+        elif speed > 0:
+            self.time_speed = 1+speed
+        else:
+            self.time_speed = 1 / (1+ abs(speed))
 
     def start(self):
+        # Ensure that there's at least one ShiftType added before starting
+        if not self.shift_types:
+            raise RuntimeError("At least one ShiftType needs to be added before starting the simulation.")
+        
+        # Check if all ShiftTypes have handoff rules set
+        for shift in self.shift_types:
+            if not shift.shift_rule:
+                raise RuntimeError(f"ShiftType '{shift.name}' does not have a handoff rule set.")
+ 
         self.running = True
         while self.running and self.current_time <= self.end_datetime:
-            self.current_time += timedelta(minutes=1 * self.time_speed)
-            time.sleep(1)  # Sleep for 1 real-world second
+            frame_duration = 1 / (ERSimulation.FRAME_RATE * self.time_speed)  # duration of a frame in real-world seconds
+            self.current_time += timedelta(minutes=1)
+
+            # Check for shift change and handoff patients
+            self.check_shift_change_and_handoff()
+
+            # Patient arrival logic
+            self.patient_arrival()
             
             discharged_patients = []  # List to store patients who have been discharged this iteration
             for patient in self.patients:
@@ -258,35 +333,122 @@ class ERSimulation:
                 patient.update_blood_and_status(self.time_speed, self.current_time)
                 if patient.discharge_status:
                     discharged_patients.append(patient)
-                
+                    
             # Remove discharged patients from the active patient list
             for patient in discharged_patients:
                 self.patients.remove(patient)
                 del patient  # Explicitly delete the patient object
+                
+            time.sleep(frame_duration)
 
     def stop(self):
         self.running = False
+
+    def create_working_schedule(self):
+        if not self.shift_types:
+            raise ValueError("Please create ShiftTypes before generating a working schedule.")
+        
+        schedule = {}
+        current_date = self.start_datetime.date()
+        
+        while current_date <= self.end_datetime.date():
+            daily_schedule = {}
+            for shift in self.shift_types:
+                daily_schedule[shift.name] = None  # Initially, no physician is assigned
+            schedule[current_date] = daily_schedule
+            current_date += timedelta(days=1)
+        
+        self.working_schedule = schedule
+        return schedule
+
+    def save_working_schedule_to_csv(self, directory="./playGround"):
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+            
+        csv_file_path = os.path.join(directory, "working_schedule.csv")
+        
+        with open(csv_file_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            header = ["Date"] + [shift.name for shift in self.shift_types]
+            writer.writerow(header)
+            
+            for date, daily_schedule in self.working_schedule.items():
+                row = [date] + list(daily_schedule.values())
+                writer.writerow(row)
+
+    def load_working_schedule_from_csv(self, csv_file_path="./playGround/working_schedule.csv"):
+        with open(csv_file_path, mode='r') as csv_file:
+            csv_reader = csv.reader(csv_file)
+            header = next(csv_reader)  # Get the header with shift names
+            
+            for row in csv_reader:
+                date = datetime.strptime(row[0], "%Y-%m-%d").date()
+                if date not in self.working_schedule:
+                    raise ValueError(f"Unexpected date {date} in CSV.")
+                
+                for i, shift_name in enumerate(header[1:]):
+                    if row[i+1]:  # If there's a physician assigned
+                        self.working_schedule[date][shift_name] = row[i+1]
+
+    def verify_schedule(self):
+        for date, daily_schedule in self.working_schedule.items():
+            for shift, physician in daily_schedule.items():
+                if not physician:
+                    raise ValueError(f"No physician assigned to {shift} on {date}.")
+
+    def check_shift_change_and_handoff(self):
+        """Check if the current time matches any ShiftType end time and handle patient handoff."""
+        for shift in self.shift_types:
+            if self.current_time.time() == shift.end_time:  # Shift end time reached
+                handoff_shifts = shift.get_handoff_shift(self.current_time)
+                
+                for patient in self.patients:
+                    # Randomly assign patients to the available shifts
+                    new_shift = random.choice(handoff_shifts)
+                    # Logic to transfer patient to the new shift goes here. This can be as simple as updating a property 
+                    # on the patient object, or more complex if there's more to the handoff process.
+                    patient.assigned_shift = new_shift  # This assumes the Patient class has an 'assigned_shift' attribute
 
     def record_patient_process(self, patient):
         """
         Record the process of a patient at the current time.
         """
-        record = {
-            'Patient_num': patient.num,
-            'Arrival_time': patient.arrival_time,
-            'Patient_type': patient.patient_type,
-            'Boarding_blood': patient.boarding_blood,
-            'Disease_blood': patient.disease_blood,
-            'Departure_blood': patient.departure_blood,
-            'Status': patient.status,
-            'Assigned_physician': patient.assigned_physician.name if patient.assigned_physician else None,
-            'Timestamp': self.current_time
-        }
-        self.patient_records.append(record)
+        if patient.num not in self.patient_records:
+            # First-time recording for this patient
+            self.patient_records[patient.num] = [{
+                'Arrival_time': patient.arrival_time,
+                'Patient_type': patient.patient_type,
+                'Initial_boarding_blood': patient.boarding_blood,
+                'Initial_disease_blood': patient.disease_blood,
+                'Initial_departure_blood': patient.departure_blood,
+                'Status': patient.status,
+                'Assigned_physician': patient.assigned_physician.name if patient.assigned_physician else None,
+                'Timestamp': self.current_time
+            }]
+            return
+
+        # Check if there's a change in physician or status
+        last_record = self.patient_records[patient.num][-1]
+        if (last_record['Assigned_physician'] != (patient.assigned_physician.name if patient.assigned_physician else None)) or \
+           (last_record['Status'] != patient.status):
+            new_record = {
+                'Arrival_time': patient.arrival_time,
+                'Patient_type': patient.patient_type,
+                'Current_boarding_blood': patient.boarding_blood,
+                'Current_disease_blood': patient.disease_blood,
+                'Current_departure_blood': patient.departure_blood,
+                'Status': patient.status,
+                'Assigned_physician': patient.assigned_physician.name if patient.assigned_physician else None,
+                'Timestamp': self.current_time
+            }
+            self.patient_records[patient.num].append(new_record)
 
     def generate_patient_chart(self):
-        # Return a table (list of dictionaries) showing each patient's journey
-        return self.patient_records
+        # Flatten the patient records to generate a chart
+        chart = []
+        for records in self.patient_records.values():
+            chart.extend(records)
+        return chart
 
     def load_hourly_range_from_csv(self, csv_file_path):
         with open(csv_file_path, mode='r') as csv_file:
@@ -359,17 +521,11 @@ class ERSimulation:
         arrival_time = self.current_time
         patient = Patient(arrival_time, patient_type)
         self.patients.append(patient)
-    def assign_patient_to_area(self, patient, area):
-        patient.assigned_area = area
-        area.patients.append(patient)
+
     def physician_treat_patient(self, physician):
         # ... logic to choose a patient based on priority
         pass
-    def advance_time(self, minutes=1):
-        self.current_time += minutes
-        # Handle patient arrivals, treatment completions, etc.
-        if self.current_time % 10 == 0:  # Every 10 minutes, for example
-            self.patient_arrival()
+
 
     # ... other methods to handle game mechanics
 
