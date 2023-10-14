@@ -1,6 +1,7 @@
 import random, os, csv, threading, time, glob
 from datetime import datetime, timedelta
 import numpy as np
+import pandas as pd
 
 def generate_patient_default_csv(filename="patient_default.csv"):
     # Check if directory exists, if not create it
@@ -277,7 +278,8 @@ class ERSimulation:
                  end_datetime, 
                  daily_patient_count,
                  med_to_trauma_ratio, 
-                 csv_file_path=None):
+                 csv_file_path=None,
+                 Simulate=False):
         self.daily_patient_count = daily_patient_count
         self.med_to_trauma_ratio = med_to_trauma_ratio
         if csv_file_path:
@@ -293,7 +295,8 @@ class ERSimulation:
         self.current_time = self.start_datetime
         self.time_speed = 1  # Default is real-time
         self.running = False
-        self.patient_records = {} 
+        self.patient_records = {}
+        self.Simulate = Simulate
 
     def set_time_speed(self, speed):
         """
@@ -329,7 +332,7 @@ class ERSimulation:
             raise RuntimeError("Please create a working schedule before starting the simulation.")
 
         self.running = True
-        while self.running and self.current_time <= self.end_datetime:
+        while self.running and self.current_time < self.end_datetime:
             frame_duration = 1 / (ERSimulation.FRAME_RATE * self.time_speed)  # duration of a frame in real-world seconds
             self.current_time += timedelta(minutes=1)
             print(self.current_time)
@@ -351,8 +354,9 @@ class ERSimulation:
             for patient in discharged_patients:
                 self.patients.remove(patient)
                 del patient  # Explicitly delete the patient object
-                
-            time.sleep(frame_duration)
+
+            if self.Simulate:    
+                time.sleep(frame_duration)
         self.running = False
         print("Simulation ending.")
 
@@ -639,3 +643,4 @@ if __name__ == '__main__':
     
     er.start()
 
+    result = pd.DataFrame(er.generate_patient_chart())
