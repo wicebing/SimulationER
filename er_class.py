@@ -438,7 +438,10 @@ class ERSimulation:
                     if new_shift.end_day_offset == 0:
                         new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
                     else:
-                        new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
+                        if self.current_time.time() >= new_shift.start_time:   
+                            new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
+                        else:
+                            new_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(new_shift.name)
                     
                     # Assign the new physician to the patient
                     patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
@@ -583,7 +586,10 @@ class ERSimulation:
             if selected_shift.end_day_offset ==0:
                 assigned_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(selected_shift.name)
             else:
-                assigned_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(selected_shift.name)
+                if self.current_time.time() >= selected_shift.start_time:
+                    assigned_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(selected_shift.name)
+                else:
+                    assigned_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(selected_shift.name)
 
             # Find the physician object based on the name
             assigned_physician = next((physician for physician in self.physicians if physician.name == assigned_physician_name), None)
