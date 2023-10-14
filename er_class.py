@@ -208,7 +208,8 @@ class Physician:
 
 class ShiftType:
     used_names = set()  # This is a class-level set to store used names
-    
+    all_shifts = []
+
     def __init__(self, name, start_time_str, end_time_str, new_patient=True):
         if name in ShiftType.used_names:
             raise ValueError(f"The name '{name}' is already in use. Please choose a different name.")
@@ -226,6 +227,7 @@ class ShiftType:
         
         self.new_patient = new_patient
         self.shift_rule = None  # Initial rule is None
+        ShiftType.all_shifts.append(self)
 
 
     def _convert_to_time(self, time_str):
@@ -247,9 +249,9 @@ class ShiftType:
         - after_midnight_shifts: List of shift names to hand off patients arriving after midnight.
         """
         self.shift_rule = {
-            'before_midnight': before_midnight_shifts,
-            'after_midnight': after_midnight_shifts,
-            'no_division': no_division
+            'before_midnight': [self.get_shift_by_name(name) for name in before_midnight_shifts],
+            'after_midnight': [self.get_shift_by_name(name) for name in after_midnight_shifts],
+            'no_division': [self.get_shift_by_name(name) for name in no_division] if no_division else None
         }
     
     def get_handoff_shift(self, arrival_datetime, current_time):
@@ -260,6 +262,13 @@ class ShiftType:
             return random.choice(self.shift_rule['before_midnight'])
         else:
             return random.choice(self.shift_rule['after_midnight'])
+        
+    @classmethod
+    def get_shift_by_name(cls, name):
+        for shift in cls.all_shifts:
+            if shift.name == name:
+                return shift
+        return None
 
 class ERSimulation:
     FRAME_RATE = 100  # Default frame rate is 100 frames per second
@@ -423,13 +432,13 @@ class ERSimulation:
                 print(f"Shift {shift.name} ending at {self.current_time}.")              
                 for patient in self.patients:
                     # Determine the next shift based on the handoff rule
-                    new_shift_name = shift.get_handoff_shift(patient.arrival_time, self.current_time)
+                    new_shift = shift.get_handoff_shift(patient.arrival_time, self.current_time)
                     
                     # Find the physician for the new shift from the working schedule
-                    if new_shift_name.end_day_offset == 0:
-                        new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift_name)
+                    if new_shift.end_day_offset == 0:
+                        new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
                     else:
-                        new_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(new_shift_name)
+                        new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
                     
                     # Assign the new physician to the patient
                     patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
