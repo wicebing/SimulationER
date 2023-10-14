@@ -354,14 +354,24 @@ class ERSimulation:
         while current_date <= self.end_datetime.date():
             daily_schedule = {}
             for shift in self.shift_types:
+                # Check if the shift on the previous day covers the current day
+                if current_date - timedelta(days=1) in schedule and shift.name in schedule[current_date - timedelta(days=1)] and shift.end_day_offset == 1:
+                    continue
+                # Check if the end_datetime is on the current_date and if the shift's start time is not covered by the end_datetime
+                if current_date == self.end_datetime.date() and self.end_datetime.time() <= shift.start_time:
+                    continue
                 daily_schedule[shift.name] = None  # Initially, no physician is assigned
-            schedule[current_date] = daily_schedule
+
+            if daily_schedule:
+                schedule[current_date] = daily_schedule
             current_date += timedelta(days=1)
         
         self.working_schedule = schedule
         return schedule
 
     def save_working_schedule_to_csv(self, directory="./playGround"):
+        if not hasattr(self, 'working_schedule') or not self.working_schedule:
+            self.create_working_schedule()
         if not os.path.exists(directory):
             os.makedirs(directory)
             
@@ -369,11 +379,13 @@ class ERSimulation:
         
         with open(csv_file_path, mode='w', newline='') as file:
             writer = csv.writer(file)
-            header = ["Date"] + [shift.name for shift in self.shift_types]
+            # For the header, take the union of all shift names scheduled for any date
+            all_shift_names = set().union(*[set(shifts.keys()) for shifts in self.working_schedule.values()])
+            header = ["Date"] + sorted(list(all_shift_names))
             writer.writerow(header)
             
             for date, daily_schedule in self.working_schedule.items():
-                row = [date] + list(daily_schedule.values())
+                row = [date] + [daily_schedule.get(shift_name, '') for shift_name in header[1:]]
                 writer.writerow(row)
 
     def load_working_schedule_from_csv(self, csv_file_path="./playGround/working_schedule.csv"):
@@ -384,11 +396,12 @@ class ERSimulation:
             for row in csv_reader:
                 date = datetime.strptime(row[0], "%Y-%m-%d").date()
                 if date not in self.working_schedule:
-                    raise ValueError(f"Unexpected date {date} in CSV.")
-                
+                    self.working_schedule[date] = {}
+                    
                 for i, shift_name in enumerate(header[1:]):
                     if row[i+1]:  # If there's a physician assigned
                         self.working_schedule[date][shift_name] = row[i+1]
+
 
     def verify_schedule(self):
         for date, daily_schedule in self.working_schedule.items():
