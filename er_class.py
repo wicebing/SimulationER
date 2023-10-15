@@ -101,6 +101,9 @@ class Patient:
         self.status = 'triage'
         self.discharge_status = False
         self.assigned_physician = None
+        self.wait_admission = False
+        self.underTreat = 0
+        self.bedsideVisit = 0
         
         self.disease_increase_rate = Patient.DEFAULT_DISEASE_INCREASE_RATES[day_of_week][hour_of_day][patient_type]
 
@@ -111,18 +114,17 @@ class Patient:
     def update_blood_and_status(self, elapsed_time, current_time):
         # Update disease blood based on elapsed time
         self.update_disease_blood(elapsed_time)
+
+        if self.underTreat > 0:
+            self.underTreat = max(0, self.underTreat - elapsed_time)  # Decrement underTreat, but not below 0
         
         # Assuming the physician's mojo is a number indicating how much blood is reduced per second
         if self.assigned_physician:
             mojo = self.assigned_physician.get_mojo(self.patient_type, current_time)
             blood_reduction = mojo * elapsed_time  #  elapsed_time is in minutes
             
-            if self.boarding_blood > 0:
-                self.boarding_blood -= blood_reduction
-            elif self.disease_blood > 0:
-                self.disease_blood -= blood_reduction
-            elif self.departure_blood > 0:
-                self.departure_blood -= blood_reduction
+            if self.underTreat > 0 and self.disease_blood > 0:
+                self.disease_blood = max(0, self.disease_blood - blood_reduction)               
 
         # Update patient's status based on blood values
         if self.boarding_blood <= 0:
@@ -344,9 +346,13 @@ class ERSimulation:
             self.patient_arrival()
             
             discharged_patients = []  # List to store patients who have been discharged this iteration
+            # Handle physician-patient interactions
+            for physician in self.physicians:
+                self.physician_treat_patient(physician)
+
             for patient in self.patients:
                 self.record_patient_process(patient)
-                patient.update_blood_and_status(self.time_speed, self.current_time)
+                patient.update_blood_and_status(1, self.current_time)
                 if patient.discharge_status:
                     discharged_patients.append(patient)
                     
@@ -658,11 +664,58 @@ class ERSimulation:
             patient.assigned_physician = assigned_physician
             print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type} and was assigned to {assigned_physician.name}.")
 
-
-
     def physician_treat_patient(self, physician):
-        # ... logic to choose a patient based on priority
-        pass
+        # Filter out the patients assigned to the current physician
+        physician_patients = [p for p in self.patients if p.assigned_physician == physician]
+        
+        # Check if any patient is currently being visited by the physician
+        visited_patient = next((p for p in physician_patients if p.bedsideVisit == 1), None)
+        
+        # If no patient is being visited, select a patient to visit based on some criteria (e.g., arrival time)
+        if not visited_patient:
+            sorted_patients = sorted(physician_patients, key=lambda p: p.arrival_time)
+            for patient in sorted_patients:
+                if patient.status != 'discharge':
+                    visited_patient = patient
+                    break
+        
+        # If we still don't have a patient to visit (e.g., all are discharged), exit the function
+        if not visited_patient:
+            return
+        
+        # Set bedsideVisit to 1 for the visited patient
+        visited_patient.bedsideVisit = 1
+        
+        # Calculate the physician's mojo for the patient type
+        mojo = physician.get_mojo(visited_patient.patient_type, self.current_time)
+        blood_reduction = mojo  # Blood reduction rate when bedsideVisit = 1
+        
+        # If boarding blood is still positive, reduce it
+        if visited_patient.boarding_blood > 0:
+            visited_patient.boarding_blood = max(0, visited_patient.boarding_blood - 2*blood_reduction)
+            if visited_patient.boarding_blood <= 0:
+                visited_patient.underTreat += 60  # Increase underTreat by 60 minutes when status becomes on-board
+        # If underTreat is positive and disease blood is positive, reduce disease blood and increase underTreat
+        elif visited_patient.underTreat > 0 and visited_patient.disease_blood > 0:
+            visited_patient.disease_blood = max(0, visited_patient.disease_blood - blood_reduction)
+            visited_patient.underTreat += 10  # Increase by 10 for each minute the physician visits the patient
+        # If disease blood is 0 and departure blood is still positive, reduce it
+        elif visited_patient.disease_blood <= 0 and visited_patient.departure_blood > 0:
+            visited_patient.departure_blood = max(0, visited_patient.departure_blood - 2*blood_reduction)
+        
+        # Update the patient's status based on blood values
+        if visited_patient.boarding_blood <= 0:
+            visited_patient.status = 'on-board'
+        if visited_patient.disease_blood <= 0:
+            visited_patient.status = 'wait-depart'
+        if visited_patient.departure_blood <= 0:
+            visited_patient.status = 'discharge'
+            visited_patient.discharge_status = True
+        
+        # If the patient's boarding blood has reduced to 0, set bedsideVisit back to 0
+        if visited_patient.boarding_blood <= 0:
+            visited_patient.bedsideVisit = 0
+        
 
 
     # ... other methods to handle game mechanics
