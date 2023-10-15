@@ -458,6 +458,7 @@ class ERSimulation:
         if patient.num not in self.patient_records:
             # First-time recording for this patient
             self.patient_records[patient.num] = [{
+                'Patient_num': patient.num,
                 'Arrival_time': patient.arrival_time,
                 'Patient_type': patient.patient_type,
                 'Initial_boarding_blood': patient.boarding_blood,
@@ -474,6 +475,7 @@ class ERSimulation:
         if (last_record['Assigned_physician'] != (patient.assigned_physician.name if patient.assigned_physician else None)) or \
            (last_record['Status'] != patient.status):
             new_record = {
+                'Patient_num': patient.num,
                 'Arrival_time': patient.arrival_time,
                 'Patient_type': patient.patient_type,
                 'Current_boarding_blood': patient.boarding_blood,
@@ -491,6 +493,60 @@ class ERSimulation:
         for records in self.patient_records.values():
             chart.extend(records)
         return chart
+
+    def generate_summary(self):
+        summary = []
+        
+        # We'll go through each day in the working_schedule
+        for date, daily_schedule in self.working_schedule.items():
+            for shift_name, physician_name in daily_schedule.items():
+                # Retrieve the shift object by name
+                shift = next((s for s in self.shift_types if s.name == shift_name), None)
+                
+                # Initialize counters
+                new_arrivals = 0
+                handoffs_received = 0
+                handoffs_given = 0
+                discharges = 0
+                
+                # Calculate shift start and end datetime
+                start_datetime = datetime.combine(date, shift.start_time)
+                end_datetime = datetime.combine(date + timedelta(days=shift.end_day_offset), shift.end_time)
+                
+                # Go through patient records to count metrics
+                for patient_num, records in self.patient_records.items():
+                    for i, record in enumerate(records):
+                        timestamp = record['Timestamp']
+                        
+                        # Check if the record is within the current shift
+                        if start_datetime <= timestamp <= end_datetime:
+                            # Check for new arrivals
+                            if record['Arrival_time'] == timestamp and record['Assigned_physician'] == physician_name:
+                                new_arrivals += 1
+                            # Check for handoffs received by this physician
+                            if record['Assigned_physician'] == physician_name and record['Arrival_time'] < timestamp:
+                                handoffs_received += 1
+                            # Check for handoffs given by this physician
+                            if (i != 0 and records[i-1]['Assigned_physician'] == physician_name) and record['Assigned_physician'] != physician_name:
+                                handoffs_given += 1
+                            # Check for discharges
+                            if record['Status'] == 'discharged':
+                                discharges += 1
+
+                # Append the summary for this shift and physician
+                summary.append({
+                    'Shift Type': shift_name,
+                    'Physician Name': physician_name,
+                    'Shift Start Timing': start_datetime,
+                    'Shift End Timing': end_datetime,
+                    'New Arrival Patients': new_arrivals,
+                    'Handoff Patients Received': handoffs_received,
+                    'Handoff Patients Given': handoffs_given,
+                    'Discharged Patients': discharges
+                })
+        
+        return summary
+
 
     def load_hourly_range_from_csv(self, csv_file_path):
         with open(csv_file_path, mode='r') as csv_file:
@@ -644,3 +700,4 @@ if __name__ == '__main__':
     er.start()
 
     result = pd.DataFrame(er.generate_patient_chart())
+    summary_physician = pd.DataFrame(er.generate_summary())
