@@ -302,6 +302,11 @@ class ERSimulation:
         self.Simulate = Simulate
 
     def setup_logging(self):
+        # Remove existing log file (if it exists)
+        log_file_path = "./ersimulation.log"  # Define the path for your log file
+        if os.path.exists(log_file_path):
+            os.remove(log_file_path)
+
         log_file_path = "./ersimulation.log"  # Define the path for your log file
         logging.basicConfig(filename=log_file_path, 
                             level=logging.INFO, 
