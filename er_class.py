@@ -1,4 +1,4 @@
-import random, os, csv, threading, time, glob
+import random, os, csv, threading, time, glob, logging
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
@@ -38,7 +38,7 @@ def generate_physician_default_csv(filename="physician_default.csv"):
     with open(filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(["hour", "med", "trauma"])
-        hours = ["{:02d}:00-{:02d}:00".format(i, i+1) for i in range(24)]
+        hours = ["{:02d}:00-{:02d}:59".format(i, i) for i in range(24)]
         for hour in hours:
             writer.writerow([hour, 5, 7])
 
@@ -57,7 +57,7 @@ def generate_ersimulation_default_csv(filename="ersimulation_default.csv"):
     with open(filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(["hour", "min_patients", "max_patients"])
-        hours = ["{:02d}:00-{:02d}:00".format(i, i+1) for i in range(24)]
+        hours = ["{:02d}:00-{:02d}:59".format(i, i) for i in range(24)]
         for hour in hours:
             writer.writerow([hour, 5, 10])
 
@@ -101,7 +101,7 @@ class Patient:
         self.status = 'triage'
         self.discharge_status = False
         self.assigned_physician = None
-        self.wait_admission = False
+        self.need_admission = False
         self.underTreat = 0
         self.bedsideVisit = 0
         
@@ -174,7 +174,7 @@ class Physician:
     @staticmethod
     def default_abilities():
         abilities = {}
-        hours = ["{:02d}:00-{:02d}:00".format(i, i+1) for i in range(24)]
+        hours = ["{:02d}:00-{:02d}:59".format(i, i) for i in range(24)]
         for hour in hours:
             abilities[hour] = {'med': 5, 'trauma': 7}
         return abilities
@@ -282,6 +282,7 @@ class ERSimulation:
                  med_to_trauma_ratio, 
                  csv_file_path=None,
                  Simulate=False):
+        self.setup_logging()
         self.daily_patient_count = daily_patient_count
         self.med_to_trauma_ratio = med_to_trauma_ratio
         if csv_file_path:
@@ -299,6 +300,13 @@ class ERSimulation:
         self.running = False
         self.patient_records = {}
         self.Simulate = Simulate
+
+    def setup_logging(self):
+        log_file_path = "./ersimulation.log"  # Define the path for your log file
+        logging.basicConfig(filename=log_file_path, 
+                            level=logging.INFO, 
+                            format='%(asctime)s - %(message)s', 
+                            datefmt='%Y-%m-%d %H:%M:%S')
 
     def set_time_speed(self, speed):
         """
@@ -338,6 +346,7 @@ class ERSimulation:
             frame_duration = 1 / (ERSimulation.FRAME_RATE * self.time_speed)  # duration of a frame in real-world seconds
             self.current_time += timedelta(minutes=1)
             print(self.current_time)
+            logging.info(self.current_time)
 
             # Check for shift change and handoff patients
             self.check_shift_change_and_handoff()
@@ -347,7 +356,14 @@ class ERSimulation:
             
             discharged_patients = []  # List to store patients who have been discharged this iteration
             # Handle physician-patient interactions
-            for physician in self.physicians:
+            # Determine which physicians are currently working
+            current_shift_names = [shift.name for shift in self.shift_types if shift.is_time_within_shift(self.current_time.time())]
+            current_physician_names = [physician_name for shift_name, physician_name in self.working_schedule.get(self.current_time.date(), {}).items() if shift_name in current_shift_names]
+            current_physicians = [physician for physician in self.physicians if physician.name in current_physician_names]
+
+            discharged_patients = []  # List to store patients who have been discharged this iteration
+            # Handle physician-patient interactions for only those physicians currently working
+            for physician in current_physicians:
                 self.physician_treat_patient(physician)
 
             for patient in self.patients:
@@ -365,10 +381,12 @@ class ERSimulation:
                 time.sleep(frame_duration)
         self.running = False
         print("Simulation ending.")
+        logging.info("Simulation ending.")
 
     def stop(self):
         self.running = False
         print("Simulation ending.")
+        logging.info("Simulation ending.")
 
     def create_working_schedule(self):
         if not self.shift_types:
@@ -439,7 +457,8 @@ class ERSimulation:
         """Check if the current time matches any ShiftType end time and handle patient handoff."""
         for shift in self.shift_types:
             if self.current_time.time() == shift.end_time:  # Shift end time reached
-                print(f"Shift {shift.name} ending at {self.current_time}.")              
+                print(f"Shift {shift.name} ending at {self.current_time}.")
+                logging.info(f"Shift {shift.name} ending at {self.current_time}.")           
                 for patient in self.patients:
                     # Determine the next shift based on the handoff rule
                     new_shift = shift.get_handoff_shift(patient.arrival_time, self.current_time)
@@ -456,6 +475,7 @@ class ERSimulation:
                     # Assign the new physician to the patient
                     patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
                     print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
+                    logging.info(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
 
     def record_patient_process(self, patient):
         """
@@ -530,13 +550,13 @@ class ERSimulation:
                             if record['Arrival_time'] == timestamp and record['Assigned_physician'] == physician_name:
                                 new_arrivals += 1
                             # Check for handoffs received by this physician
-                            if record['Assigned_physician'] == physician_name and record['Arrival_time'] < timestamp:
+                            if i != 0 and records[i-1]['Assigned_physician'] != physician_name and record['Assigned_physician'] == physician_name:
                                 handoffs_received += 1
                             # Check for handoffs given by this physician
-                            if (i != 0 and records[i-1]['Assigned_physician'] == physician_name) and record['Assigned_physician'] != physician_name:
+                            if i != 0 and records[i-1]['Assigned_physician'] == physician_name and record['Assigned_physician'] != physician_name:
                                 handoffs_given += 1
                             # Check for discharges
-                            if record['Status'] == 'discharged':
+                            if record['Status'] == 'discharge' and record['Assigned_physician'] == physician_name:
                                 discharges += 1
 
                 # Append the summary for this shift and physician
@@ -552,6 +572,7 @@ class ERSimulation:
                 })
         
         return summary
+
 
 
     def load_hourly_range_from_csv(self, csv_file_path):
@@ -622,7 +643,7 @@ class ERSimulation:
         self.shift_types.append(shift_type)
 
     def patient_arrival(self):
-        current_hour_str = f"{self.current_time.hour:02d}:00-{(self.current_time.hour + 1) % 24:02d}:00"
+        current_hour_str = f"{self.current_time.hour:02d}:00-{(self.current_time.hour) % 24:02d}:59"
         min_patients, max_patients = self.hourly_range.get(current_hour_str, (0, 0))
 
         # Calculate the average expected number of arrivals for the current minute
@@ -643,6 +664,7 @@ class ERSimulation:
             # If there are no shifts available for new patients, we can't assign a physician
             if not current_shifts:
                 print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}, but no available shifts for new patients.")
+                logging.info(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}, but no available shifts for new patients.")
                 continue
 
             # Randomly select one of the current shifts
@@ -663,24 +685,32 @@ class ERSimulation:
             # Assign the patient to the physician
             patient.assigned_physician = assigned_physician
             print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type} and was assigned to {assigned_physician.name}.")
+            logging.info(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type} and was assigned to {assigned_physician.name}.")
 
     def physician_treat_patient(self, physician):
         # Filter out the patients assigned to the current physician
         physician_patients = [p for p in self.patients if p.assigned_physician == physician]
-        
+        print(f'physician {physician.name} has {len(physician_patients)} patients.')
+        logging.info(f'physician {physician.name} has {len(physician_patients)} patients.')
+
         # Check if any patient is currently being visited by the physician
         visited_patient = next((p for p in physician_patients if p.bedsideVisit == 1), None)
-        
+        print(f"Physician {physician.name} is visiting patient {visited_patient.num}." if visited_patient else f"Physician {physician.name} is not visiting any patient.")
+        logging.info(f"Physician {physician.name} is visiting patient {visited_patient.num}." if visited_patient else f"Physician {physician.name} is not visiting any patient.")
+
         # If no patient is being visited, select a patient to visit based on some criteria (e.g., arrival time)
         if not visited_patient:
-            sorted_patients = sorted(physician_patients, key=lambda p: p.arrival_time)
-            for patient in sorted_patients:
-                if patient.status != 'discharge':
-                    visited_patient = patient
-                    break
-        
+            select_status = random.choice(['triage', 'on-board', 'wait-depart', 'rest'])
+            potential_patients = [p for p in physician_patients if p.status == select_status]
+            if potential_patients:
+                visited_patient = random.choice(potential_patients)
+                print(f"Physician {physician.name} is visiting patient {visited_patient.num}." if visited_patient else f"Physician {physician.name} is not visiting any patient.")
+                logging.info(f"Physician {physician.name} is visiting patient {visited_patient.num}." if visited_patient else f"Physician {physician.name} is not visiting any patient.")
+
         # If we still don't have a patient to visit (e.g., all are discharged), exit the function
         if not visited_patient:
+            print(f"Physician {physician.name} rest in this minute.")
+            logging.info(f"Physician {physician.name} rest in this minute, no visit any patient.")
             return
         
         # Set bedsideVisit to 1 for the visited patient
@@ -693,16 +723,24 @@ class ERSimulation:
         # If boarding blood is still positive, reduce it
         if visited_patient.boarding_blood > 0:
             visited_patient.boarding_blood = max(0, visited_patient.boarding_blood - 2*blood_reduction)
+            print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease boarding blood by {blood_reduction}')
+            logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease boarding blood by {blood_reduction}')
             if visited_patient.boarding_blood <= 0:
                 visited_patient.underTreat += 60  # Increase underTreat by 60 minutes when status becomes on-board
+                print(f'patient {visited_patient.num} status becomes on-board')
+                logging.info(f'patient {visited_patient.num} status becomes on-board')
         # If underTreat is positive and disease blood is positive, reduce disease blood and increase underTreat
         elif visited_patient.underTreat > 0 and visited_patient.disease_blood > 0:
             visited_patient.disease_blood = max(0, visited_patient.disease_blood - blood_reduction)
             visited_patient.underTreat += 10  # Increase by 10 for each minute the physician visits the patient
+            print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
+            logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
         # If disease blood is 0 and departure blood is still positive, reduce it
         elif visited_patient.disease_blood <= 0 and visited_patient.departure_blood > 0:
             visited_patient.departure_blood = max(0, visited_patient.departure_blood - 2*blood_reduction)
-        
+            print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease departure blood by {blood_reduction}')
+            logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease departure blood by {blood_reduction}')
+            
         # Update the patient's status based on blood values
         if visited_patient.boarding_blood <= 0:
             visited_patient.status = 'on-board'
@@ -724,7 +762,7 @@ class ERSimulation:
 
 
 if __name__ == '__main__':
-    er=ERSimulation("2023-03-01 08:00:00", "2023-03-03 07:59:00", 200, 0.2, "settings/ersimulation_default.csv")
+    er=ERSimulation("2023-03-01 08:00:00", "2023-03-03 07:59:00", 200, 0.2, "settings/ersimulation_default.csv", Simulate=False)
     er.set_time_speed(4)
     er.create_physician("DrA")
     er.create_physician("DrB")
