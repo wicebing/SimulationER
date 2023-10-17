@@ -503,6 +503,9 @@ class ERSimulation:
                 for patient in self.patients:
                     if patient.assigned_physician and patient.assigned_physician.shift_type == shift.name:
                         off_physician = patient.assigned_physician
+                        off_physician.shift_type = None
+                        off_physician.energy = 180
+                        off_physician.fatigue = 0
                         # Determine the next shift based on the handoff rule
                         new_shift = shift.get_handoff_shift(patient.arrival_time, self.current_time)
                         
@@ -702,7 +705,7 @@ class ERSimulation:
 
     def adjust_hourly_range(self):
         # Calculate the scaling factor
-        total_patients_in_hourly_range = sum([max_val for _, max_val in self.hourly_range.values()])
+        total_patients_in_hourly_range = sum([int((min_val+max_val)/2) for min_val, max_val in self.hourly_range.values()])
         scaling_factor = self.daily_patient_count / (total_patients_in_hourly_range)  # Assuming a month is roughly 30 days
 
         # Adjust the hourly range
@@ -849,7 +852,7 @@ class ERSimulation:
 
         """Record the physician's action for the current frame."""
         action = 1 if visited_patient else 0
-        physician.energy = min(physician.energy + 10, 200) if action == 0 else max(physician.energy - 1, 0)
+        physician.energy = min(physician.energy + 1, 200) if action == 0 else max(physician.energy - 1, 0)
         physician.fatigue = physician.fatigue + 1 if action == 1 and physician.energy==0 else physician.fatigue
         physician.fatigue = max(physician.fatigue - 1, 0) if action == 0 else physician.fatigue
 
