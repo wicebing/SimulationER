@@ -849,11 +849,17 @@ class ERSimulation:
 
         """Record the physician's action for the current frame."""
         action = 1 if visited_patient else 0
+        physician.energy = min(physician.energy + 10, 200) if action == 0 else max(physician.energy - 1, 0)
+        physician.fatigue = physician.fatigue + 1 if action == 1 and physician.energy==0 else physician.fatigue
+        physician.fatigue = max(physician.fatigue - 1, 0) if action == 0 else physician.fatigue
+
         if physician.name not in self.physician_records:
             self.physician_records[physician.name] = []
         self.physician_records[physician.name].append({
             'ShiftType': physician.shift_type,
             'Timestamp': self.current_time,
+            'energy':physician.energy,
+            'fatigue':physician.fatigue,
             'Action': action,
             'patient': visited_patient.num if visited_patient else None,
             'underTreat': underTreat_count,
