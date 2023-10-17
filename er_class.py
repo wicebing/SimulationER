@@ -175,6 +175,7 @@ class Physician:
         self.energy = energy  # Default energy is 100
         self.fatigue = 0  # Default fatigue is 0
         self.rest_tendency = 1  # Default rest tendency is 1, minimum is 1
+        self.shift_type = None  # Initial shift type is None
 
     @staticmethod
     def default_abilities():
@@ -306,6 +307,11 @@ class ERSimulation:
         self.patient_records = {}
         self.Simulate = Simulate
 
+        # attributes for recording
+        self.physician_records = {}  # Stores physician's actions every minute
+        self.shift_records = {}  # Stores shiftType's patient counts (status and underTreat) every minute
+        self.total_er_records = []  # Stores total ER patient counts (status and underTreat) every minute
+
     def setup_logging(self):
         # Remove existing log file (if it exists)
         log_file_path = "./ersimulation.log"  # Define the path for your log file
@@ -385,6 +391,12 @@ class ERSimulation:
             for patient in discharged_patients:
                 self.patients.remove(patient)
                 del patient  # Explicitly delete the patient object
+
+            # Record shiftType's patient counts for this frame (minute)
+            for shift in self.shift_types:
+                self.record_shift_patients(shift)
+            # Record total ER patient counts for this frame (minute)
+            self.record_total_er_patients()
 
             if self.Simulate:    
                 time.sleep(frame_duration)
@@ -485,9 +497,11 @@ class ERSimulation:
                             new_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(new_shift.name)
                     
                     # Assign the new physician to the patient
+                    patient.assigned_physician.shift_type = None
                     patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
                     print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
                     logging.info(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
+                    patient.assigned_physician.shift_type = new_shift.name
 
     def record_patient_process(self, patient):
         """
@@ -598,12 +612,53 @@ class ERSimulation:
                         'Handoff Patients Received': metric['handoffs_received'],
                         'Handoff Patients Given': metric['handoffs_given'],
                         'Discharged Patients': metric['discharges']
-                    })
-        
+                    })  
         return summary
 
+    def record_patient_counts(self):
+        """Record the patient counts (status and underTreat) for each shift and the total ER at the current frame."""
 
+        # Initial setup
+        shift_dicts = {shift.name: {
+            'triage': 0,
+            'on-board': 0,
+            'wait-depart': 0,
+            'underTreat': 0
+        } for shift in self.shift_types}
 
+        total_er_dict = {
+            'triage': 0,
+            'on-board': 0,
+            'wait-depart': 0,
+            'underTreat': 0
+        }
+
+        # Iterating through each patient once
+        for patient in self.patients:
+            assigned_shift = patient.assigned_physician.shift_type if patient.assigned_physician else None
+            if assigned_shift and patient.status in shift_dicts[assigned_shift]:
+                shift_dicts[assigned_shift][patient.status] += 1
+                if patient.underTreat > 0:
+                    shift_dicts[assigned_shift]['underTreat'] += 1
+
+            if patient.status in total_er_dict:
+                total_er_dict[patient.status] += 1
+                if patient.underTreat > 0:
+                    total_er_dict['underTreat'] += 1
+
+        # Appending the current frame's data to the respective record lists
+        for shift_name, counts in shift_dicts.items():
+            if shift_name not in self.shift_records:
+                self.shift_records[shift_name] = []
+            self.shift_records[shift_name].append({
+                'Timestamp': self.current_time,
+                **counts
+            })
+
+        self.total_er_records.append({
+            'Timestamp': self.current_time,
+            **total_er_dict
+        })
 
     def load_hourly_range_from_csv(self, csv_file_path):
         with open(csv_file_path, mode='r') as csv_file:
@@ -711,17 +766,19 @@ class ERSimulation:
 
             # Find the physician object based on the name
             assigned_physician = next((physician for physician in self.physicians if physician.name == assigned_physician_name), None)
-            
+            assigned_physician.shift_type = selected_shift.name
+
             # Assign the patient to the physician
             patient.assigned_physician = assigned_physician
             print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type} and was assigned to {assigned_physician.name}.")
             logging.info(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type} and was assigned to {assigned_physician.name}.")
 
     def physician_treat_patient(self, physician):
+        all_status = ['triage', 'on-board', 'wait-depart']
         # Filter out the patients assigned to the current physician
         physician_patients = [p for p in self.patients if p.assigned_physician == physician]
         # Count the number of patients in each status
-        status_counts = {status: sum(1 for p in physician_patients if p.status == status) for status in ['triage', 'on-board', 'wait-depart', 'rest']}
+        status_counts = {status: sum(1 for p in physician_patients if p.status == status) for status in all_status}
         underTreat_count = sum(1 for p in physician_patients if p.underTreat > 0)
         
         print(f"Physician {physician.name} has {len(physician_patients)} patients. Status counts: {status_counts}. Number of patients with underTreat > 0: {underTreat_count}")
@@ -734,9 +791,10 @@ class ERSimulation:
             logging.info(f"Physician {physician.name} keep visiting patient {visited_patient.num}.")               
         # If no patient is being visited, select a patient to visit based on some criteria (e.g., arrival time)
         else:
+            status_weight = [1 if status_counts[status] > 0 else 0 for status in all_status]
             # Adjust the selection probability based on the physician's energy
-            weights = [1, 1, 1, max(physician.rest_tendency, physician.rest_tendency/(1+physician.energy))]  # Increasing the weight for 'rest' as energy decreases
-            select_status = random.choices(['triage', 'on-board', 'wait-depart', 'rest'], weights=weights, k=1)[0]
+            weights = [*status_weight, max(physician.rest_tendency, physician.rest_tendency/(1+physician.energy))]  # Increasing the weight for 'rest' as energy decreases
+            select_status = random.choices([*all_status, 'rest'], weights=weights, k=1)[0]
 
             potential_patients = [p for p in physician_patients if p.status == select_status]
 
@@ -753,6 +811,17 @@ class ERSimulation:
             if visited_patient:
                 print(f"Physician {physician.name} is visiting patient {visited_patient.num}." )
                 logging.info(f"Physician {physician.name} is visiting patient {visited_patient.num}." )
+
+        """Record the physician's action for the current frame."""
+        action = 1 if visited_patient else 0
+        if physician.name not in self.physician_records:
+            self.physician_records[physician.name] = []
+        self.physician_records[physician.name].append({
+            'ShiftType': physician.shift_type,
+            'Timestamp': self.current_time,
+            'Action': action,
+            'patient': visited_patient.num if visited_patient else None
+        })
 
         # If we still don't have a patient to visit (e.g., all are discharged), exit the function
         if not visited_patient:
@@ -839,3 +908,7 @@ if __name__ == '__main__':
 
     result = pd.DataFrame(er.generate_patient_chart())
     summary_physician = pd.DataFrame(er.generate_summary())
+    summary_shift = pd.DataFrame(er.shift_records)
+    summary_er = pd.DataFrame(er.total_er_records)
+    physician_records = pd.DataFrame(er.physician_records)
+
