@@ -313,8 +313,13 @@ class ERSimulation:
         self.total_er_records = []  # Stores total ER patient counts (status and underTreat) every minute
 
     def setup_logging(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         # Remove existing log file (if it exists)
-        log_file_path = "./ersimulation.log"  # Define the path for your log file
+        log_file_path = f"./log/ersimulation_{timestamp}.log"  
+
+        # Ensure the log directory exists
+        if not os.path.exists("./log"):
+            os.makedirs("./log")
         if os.path.exists(log_file_path):
             os.remove(log_file_path)
 
@@ -392,11 +397,8 @@ class ERSimulation:
                 self.patients.remove(patient)
                 del patient  # Explicitly delete the patient object
 
-            # Record shiftType's patient counts for this frame (minute)
-            for shift in self.shift_types:
-                self.record_shift_patients(shift)
             # Record total ER patient counts for this frame (minute)
-            self.record_total_er_patients()
+            self.record_patient_counts()
 
             if self.Simulate:    
                 time.sleep(frame_duration)
@@ -874,7 +876,18 @@ class ERSimulation:
 
     # ... other methods to handle game mechanics
 
-
+def save_to_excel(data, filename):
+    """
+    Save a dictionary of dictionaries to an Excel file with separate sheets.
+    
+    Parameters:
+    - data: The dictionary of dictionaries.
+    - filename: The filename for the Excel file.
+    """
+    with pd.ExcelWriter(filename) as writer:
+        for key, records in data.items():
+            df = pd.DataFrame(records)
+            df.to_excel(writer, sheet_name=str(key), index=False)
 
 
 if __name__ == '__main__':
@@ -908,7 +921,12 @@ if __name__ == '__main__':
 
     result = pd.DataFrame(er.generate_patient_chart())
     summary_physician = pd.DataFrame(er.generate_summary())
-    summary_shift = pd.DataFrame(er.shift_records)
     summary_er = pd.DataFrame(er.total_er_records)
     physician_records = pd.DataFrame(er.physician_records)
+
+    result.to_excel('./results/result.xlsx', index=False)
+    summary_physician.to_excel('./results/summary_physician.xlsx', index=False)
+    summary_er.to_excel('./results/summary_er.xlsx', index=False)
+    save_to_excel(er.shift_records,'./results/summary_shift.xlsx')
+    save_to_excel(er.physician_records,'./results/physician_records.xlsx')
 
