@@ -747,8 +747,8 @@ class ERSimulation:
             physician.set_abilities_from_csv(csv_file_path)
             self.physicians.append(physician)
 
-    def create_shift_type(self, name, start_time, end_time, new_patient=True):
-        shift_type = ShiftType(name, start_time, end_time, new_patient)
+    def create_shift_type(self, name, start_time, end_time, recieve_patient_type=['med',], new_patient=True):
+        shift_type = ShiftType(name, start_time, end_time, recieve_patient_type, new_patient)
         self.shift_types.append(shift_type)
 
     def patient_arrival(self):
@@ -771,7 +771,7 @@ class ERSimulation:
             current_shifts = [shift for shift in self.shift_types 
                             if shift.new_patient 
                             and shift.is_time_within_shift(self.current_time.time())
-                            and patient_type in shift.receive_patient_type]
+                            and patient_type in shift.recieve_patient_type]
 
             # If there are no shifts available for new patients, we can't assign a physician
             if not current_shifts:
@@ -780,7 +780,7 @@ class ERSimulation:
                 continue
 
             # Count how many new patients each shift has received
-            shift_counts = {shift.name: shift.recieve_patient_num for shift in current_shifts}
+            shift_counts = {shift: shift.recieve_patient_num for shift in current_shifts}
 
             # Find the shift with the least number of new patients
             min_count = min(shift_counts.values())
@@ -926,7 +926,7 @@ def save_to_excel(data, filename):
 
 
 if __name__ == '__main__':
-    er=ERSimulation("2023-03-01 08:00:00", "2023-03-06 07:59:00", 200, 5, "settings/ersimulation_default.csv", Simulate=False)
+    er=ERSimulation("2023-03-01 08:00:00", "2023-03-06 07:59:00", 200, 0.8, "settings/ersimulation_default.csv", Simulate=False)
     er.set_time_speed(4)
     er.create_physician("DrA")
     er.create_physician("DrB")
@@ -935,10 +935,10 @@ if __name__ == '__main__':
     er.create_physician("DrE")
     er.create_physician("DrF")
 
-    er.create_shift_type(name='a',start_time_str='08:00',end_time_str='20:00',recieve_patient_type=['med',], new_patient=True)
-    er.create_shift_type(name='b',start_time_str='08:00',end_time_str='20:00',recieve_patient_type=['med','trauma'], new_patient=True)
-    er.create_shift_type(name='an',start_time_str='20:00',end_time_str='08:00',recieve_patient_type=['med','trauma'], new_patient=True)
-    er.create_shift_type(name='e',start_time_str='08:00',end_time_str='20:00',recieve_patient_type=['med','trauma'], new_patient=False)
+    er.create_shift_type(name='a',start_time='08:00',end_time='20:00',recieve_patient_type=['med',], new_patient=True)
+    er.create_shift_type(name='b',start_time='08:00',end_time='20:00',recieve_patient_type=['med','trauma'], new_patient=True)
+    er.create_shift_type(name='an',start_time='20:00',end_time='08:00',recieve_patient_type=['med','trauma'], new_patient=True)
+    er.create_shift_type(name='e',start_time='08:00',end_time='20:00',recieve_patient_type=['med','trauma'], new_patient=False)
 
     er.shift_types[0].set_shift_rule(['an'],['an'],['an'])
     er.shift_types[1].set_shift_rule(['an'],['an'],['an'])
