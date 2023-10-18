@@ -94,18 +94,22 @@ class Patient:
         hour_of_day = arrival_time.strftime('%H:00-%H:59')
         
         self.patient_type = patient_type
-        self.boarding_blood = boarding_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['boarding']
-        self.disease_blood = disease_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['disease']
-        self.departure_blood = departure_blood or Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['departure']
-        
+        default_boarding_blood = Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['boarding']
+        default_disease_blood = Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['disease']
+        default_departure_blood = Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['departure']
+        default_increase_rate = Patient.DEFAULT_DISEASE_INCREASE_RATES[day_of_week][hour_of_day][patient_type]
+
+        self.boarding_blood = boarding_blood or np.random.randint(int(default_boarding_blood * 0.5), int(default_boarding_blood * 2) + 1)
+        self.disease_blood = disease_blood or np.random.randint(int(default_disease_blood * 0.1), int(default_disease_blood * 10) + 1)
+        self.departure_blood = departure_blood or np.random.randint(int(default_departure_blood * 0.66), int(default_departure_blood * 1.5) + 1)
+        self.disease_increase_rate = np.random.randint(int(default_increase_rate * 0.33), int(default_increase_rate * 3) + 1)
+
         self.status = 'triage'
         self.discharge_status = False
         self.assigned_physician = None
         self.need_admission = False
         self.underTreat = 0
-        self.bedsideVisit = 0
-        
-        self.disease_increase_rate = Patient.DEFAULT_DISEASE_INCREASE_RATES[day_of_week][hour_of_day][patient_type]
+        self.bedsideVisit = 0        
 
     def update_disease_blood(self, elapsed_time):
         if self.disease_blood > 0:
@@ -155,8 +159,8 @@ class Patient:
     '''
     CSV file should be structured as follows:
     day,hour,patient_type,blood_value,increase_rate
-    Monday,00:00-01:00,med,30,1
-    Monday,00:00-01:00,trauma,50,2
+    Monday,00:00-00:59,med,30,1
+    Monday,00:00-00:59,trauma,50,2
     '''
 
 class Physician:
@@ -408,6 +412,10 @@ class ERSimulation:
                 self.record_patient_process(patient)
                 self.patients.remove(patient)
                 del patient  # Explicitly delete the patient object
+
+            needAdmission_patients = [p for p in self.patients if p.need_admission]
+
+
 
             # Record total ER patient counts for this frame (minute)
             self.record_patient_counts()
@@ -693,8 +701,8 @@ class ERSimulation:
             next(csv_reader)  # Skip the header row
             hourly_range = {}
             for row in csv_reader:
-                hour, min_patients, max_patients = row
-                hourly_range[hour] = (int(min_patients), int(max_patients))
+                hour, mean_patients, std_patients = row
+                hourly_range[hour] = (mean_patients, std_patients)
         self.hourly_range = hourly_range
 
     # structure of the CSV file should be:
@@ -705,12 +713,12 @@ class ERSimulation:
 
     def adjust_hourly_range(self):
         # Calculate the scaling factor
-        total_patients_in_hourly_range = sum([int((min_val+max_val)/2) for min_val, max_val in self.hourly_range.values()])
+        total_patients_in_hourly_range = sum([mean_val for mean_val, std_val in self.hourly_range.values()])
         scaling_factor = self.daily_patient_count / (total_patients_in_hourly_range)  # Assuming a month is roughly 30 days
 
         # Adjust the hourly range
-        for hour, (min_val, max_val) in self.hourly_range.items():
-            self.hourly_range[hour] = (int(min_val * scaling_factor), int(max_val * scaling_factor))
+        for hour, (mean_val, std_val) in self.hourly_range.items():
+            self.hourly_range[hour] = (int(mean_val * scaling_factor), int(std_val * scaling_factor))
 
     def create_physician(self, name, abilities=None):
         physician = Physician(name, abilities)
@@ -756,10 +764,11 @@ class ERSimulation:
 
     def patient_arrival(self):
         current_hour_str = f"{self.current_time.hour:02d}:00-{(self.current_time.hour) % 24:02d}:59"
-        min_patients, max_patients = self.hourly_range.get(current_hour_str, (0, 0))
+        mean_patients, std_patients = self.hourly_range.get(current_hour_str, (0, 0))
 
         # Calculate the average expected number of arrivals for the current minute
-        average_arrivals_this_minute = (max_patients - min_patients) / 60.0 + min_patients / 60.0
+        hour_patient_amount = max(0,mean_patients + random.gauss()*std_patients)
+        average_arrivals_this_minute = hour_patient_amount / 60.0
 
         # Use the Poisson distribution to get a random number of arrivals for this minute
         num_arrivals = np.random.poisson(average_arrivals_this_minute)
@@ -891,14 +900,21 @@ class ERSimulation:
                 visited_patient.underTreat += 60  # Increase underTreat by 60 minutes when status becomes on-board
                 print(f'patient {visited_patient.num} status becomes on-board')
                 logging.info(f'patient {visited_patient.num} status becomes on-board')
+                if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 72:
+                    visited_patient.need_admission = True
+
         # If underTreat is positive and disease blood is positive, reduce disease blood and increase underTreat
         elif visited_patient.underTreat > 0 and visited_patient.disease_blood > 0:
             visited_patient.disease_blood = max(0, visited_patient.disease_blood - blood_reduction)
             visited_patient.underTreat += 10  # Increase by 10 for each minute the physician visits the patient
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
+            if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 72:
+                visited_patient.need_admission = True
+
         # If disease blood is 0 and departure blood is still positive, reduce it
         elif visited_patient.disease_blood <= 0 and visited_patient.departure_blood > 0:
+            visited_patient.need_admission = False
             visited_patient.departure_blood = max(0, visited_patient.departure_blood - 2*blood_reduction)
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease departure blood by {2*blood_reduction}')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease departure blood by {2*blood_reduction}')
