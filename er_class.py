@@ -137,9 +137,11 @@ class Patient:
             self.status = 'on-board'
         if self.disease_blood <= 0:
             self.status = 'wait-depart'
+            self.need_admission = False
         if self.departure_blood <= 0:
             self.status = 'discharge'
             self.discharge_status = True
+            self.need_admission = False
 
     @classmethod
     def load_defaults_from_csv(cls, csv_file_path):
