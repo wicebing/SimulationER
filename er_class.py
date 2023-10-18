@@ -85,7 +85,7 @@ class Patient:
         # ...
     }
     
-    def __init__(self, arrival_time, patient_type, boarding_blood=None, disease_blood=None, departure_blood=10):
+    def __init__(self, arrival_time, patient_type, boarding_blood=None, disease_blood=None, departure_blood=None):
         Patient.patient_counter += 1
         self.num = Patient.patient_counter
         
@@ -99,10 +99,10 @@ class Patient:
         default_departure_blood = Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['departure']
         default_increase_rate = Patient.DEFAULT_DISEASE_INCREASE_RATES[day_of_week][hour_of_day][patient_type]
 
-        self.boarding_blood = boarding_blood or np.random.randint(int(default_boarding_blood * 0.5), int(default_boarding_blood * 2) + 1)
-        self.disease_blood = disease_blood or np.random.randint(int(default_disease_blood * 0.1), int(default_disease_blood * 10) + 1)
-        self.departure_blood = departure_blood or np.random.randint(int(default_departure_blood * 0.66), int(default_departure_blood * 1.5) + 1)
-        self.disease_increase_rate = np.random.randint(int(default_increase_rate * 0.33), int(default_increase_rate * 3) + 1)
+        self.boarding_blood = boarding_blood or max(10,int(random.gauss(default_boarding_blood, 20)))
+        self.disease_blood = disease_blood or max(50,int(random.gauss(default_disease_blood, 200)))
+        self.departure_blood = departure_blood or max(5,int(random.gauss(default_departure_blood, 5)))
+        self.disease_increase_rate = max(1,int(random.gauss(default_increase_rate, 2)))
 
         self.status = 'triage'
         self.discharge_status = False
@@ -293,15 +293,22 @@ class ERSimulation:
                  daily_patient_count,
                  med_to_trauma_ratio, 
                  csv_file_path=None,
+                 admission_csv_path=None,
                  Simulate=False):
         self.setup_logging()
         self.daily_patient_count = daily_patient_count
         self.med_to_trauma_ratio = med_to_trauma_ratio
         if csv_file_path:
             self.load_hourly_range_from_csv(csv_file_path)
-            self.adjust_hourly_range()
         else:
             self.hourly_range = {}  # Default empty dictionary or some default values
+        # Load the admission_default.csv into self.admission_count
+        if admission_csv_path:
+            self.load_admission_data_from_csv(admission_csv_path)
+        else:
+            self.admission_count = {}  # Default empty dictionary
+        self.adjust_hourly_range()
+
         self.patients = []
         self.physicians = []
         self.shift_types = []
@@ -406,16 +413,39 @@ class ERSimulation:
                 if patient.discharge_status:
                     discharged_patients.append(patient)
                 self.record_patient_process(patient)
-                    
+
+            # Calculate possible admission patient number for the current time
+            current_day_str = self.current_time.strftime('%A')  # e.g., "Monday"
+            current_hour_str = f"{self.current_time.hour:02d}:00-{(self.current_time.hour) % 24:02d}:59"
+            key = f"{current_day_str}, {current_hour_str}"
+            mean_adm, std_adm = self.admission_count.get(key, (0, 0))
+            
+            # Calculate the average expected number of admissions for the current minute
+            hour_adm_amount = max(0, mean_adm + random.gauss(0, 1) * std_adm)
+            average_admissions_this_minute = hour_adm_amount / 60.0
+            # Use the Poisson distribution to get a random number of admissions for this minute
+            num_admissions = np.random.poisson(average_admissions_this_minute)  
+
+            needAdmission_patients = [p for p in self.patients if p.need_admission]
+            # If there are more patients needing admission than the number of admissions, randomly select patients to be admitted
+            if len(needAdmission_patients) > num_admissions:
+                patients_to_admit = random.sample(needAdmission_patients, num_admissions)
+            else:
+                patients_to_admit = needAdmission_patients
+            
+            if len(patients_to_admit) > 0:
+                for patient in patients_to_admit:
+                    patient.status = 'admission'
+                    patient.discharge_status = True
+                    print(f"Patient {patient.num} admitted at {self.current_time}.")
+                    logging.info(f"Patient {patient.num} admitted at {self.current_time}.")
+                    discharged_patients.append(patient)
+
             # Remove discharged patients from the active patient list
             for patient in discharged_patients:
                 self.record_patient_process(patient)
                 self.patients.remove(patient)
                 del patient  # Explicitly delete the patient object
-
-            needAdmission_patients = [p for p in self.patients if p.need_admission]
-
-
 
             # Record total ER patient counts for this frame (minute)
             self.record_patient_counts()
@@ -596,7 +626,8 @@ class ERSimulation:
                         'new_arrivals': 0,
                         'handoffs_received': 0,
                         'handoffs_given': 0,
-                        'discharges': 0
+                        'discharges': 0,
+                        'admissions': 0
                     }
                 }
                 # Initialize counters for each patient type
@@ -605,7 +636,8 @@ class ERSimulation:
                         'new_arrivals': 0,
                         'handoffs_received': 0,
                         'handoffs_given': 0,
-                        'discharges': 0
+                        'discharges': 0,
+                        'admissions': 0
                     }
 
                 # Calculate shift start and end datetime
@@ -634,6 +666,9 @@ class ERSimulation:
                                 # Check for discharges
                                 if record['Status'] == 'discharge' and record['Assigned_physician'] == physician_name:
                                     metrics[key]['discharges'] += 1
+                                # Check for admissions
+                                if record['Status'] == 'admission' and record['Assigned_physician'] == physician_name:
+                                    metrics[key]['admissions'] += 1
 
                 # Append the summary for this shift and physician (for total and each patient type)
                 for key, metric in metrics.items():
@@ -646,7 +681,8 @@ class ERSimulation:
                         'New Arrival Patients': metric['new_arrivals'],
                         'Handoff Patients Received': metric['handoffs_received'],
                         'Handoff Patients Given': metric['handoffs_given'],
-                        'Discharged Patients': metric['discharges']
+                        'Discharged Patients': metric['discharges'],
+                        'Admitted Patients': metric['admissions']
                     })  
         return summary
 
@@ -695,6 +731,17 @@ class ERSimulation:
             **total_er_dict
         })
 
+    def load_admission_data_from_csv(self, csv_file_path):
+        with open(csv_file_path, mode='r') as csv_file:
+            csv_reader = csv.reader(csv_file)
+            next(csv_reader)  # Skip the header row
+            admission_data = {}
+            for row in csv_reader:
+                day, hour, mean_patients, std_patients = row
+                key = f"{day}, {hour}"
+                admission_data[key] = (float(mean_patients), float(std_patients))
+        self.admission_count = admission_data
+
     def load_hourly_range_from_csv(self, csv_file_path):
         with open(csv_file_path, mode='r') as csv_file:
             csv_reader = csv.reader(csv_file)
@@ -702,13 +749,13 @@ class ERSimulation:
             hourly_range = {}
             for row in csv_reader:
                 hour, mean_patients, std_patients = row
-                hourly_range[hour] = (mean_patients, std_patients)
+                hourly_range[hour] = (float(mean_patients), float(std_patients))
         self.hourly_range = hourly_range
 
     # structure of the CSV file should be:
     # hour,min_patients,max_patients
-    # 00:00-01:00,5,10
-    # 01:00-02:00,5,10
+    # 00:00-00:59,5,10
+    # 01:00-01:59,5,10
     # ...    
 
     def adjust_hourly_range(self):
@@ -718,7 +765,11 @@ class ERSimulation:
 
         # Adjust the hourly range
         for hour, (mean_val, std_val) in self.hourly_range.items():
-            self.hourly_range[hour] = (int(mean_val * scaling_factor), int(std_val * scaling_factor))
+            self.hourly_range[hour] = (mean_val * scaling_factor, std_val * scaling_factor)
+
+        # Adjust the hourly range
+        for dayhour, (mean_val, std_val) in self.admission_count.items():
+            self.admission_count[dayhour] = (mean_val * scaling_factor, std_val * scaling_factor)
 
     def create_physician(self, name, abilities=None):
         physician = Physician(name, abilities)
@@ -909,7 +960,7 @@ class ERSimulation:
             visited_patient.underTreat += 10  # Increase by 10 for each minute the physician visits the patient
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
-            if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 72:
+            if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 150:
                 visited_patient.need_admission = True
 
         # If disease blood is 0 and departure blood is still positive, reduce it
@@ -951,7 +1002,12 @@ def save_to_excel(data, filename):
 
 
 if __name__ == '__main__':
-    er=ERSimulation("2023-03-01 08:00:00", "2023-03-06 07:59:00", 200, 0.8, "settings/ersimulation_default.csv", Simulate=False)
+    er=ERSimulation("2023-03-01 08:00:00", 
+                    "2023-03-06 07:59:00", 
+                    200, 0.8, 
+                    "settings/ersimulation_default.csv", 
+                    'settings/admission_default.csv',
+                    Simulate=False)
     er.set_time_speed(4)
     er.create_physician("DrA")
     er.create_physician("DrB")
