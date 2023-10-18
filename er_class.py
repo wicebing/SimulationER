@@ -442,6 +442,7 @@ class ERSimulation:
                     print(f"Patient {patient.num} admitted at {self.current_time}.")
                     logging.info(f"Patient {patient.num} admitted at {self.current_time}.")
                     discharged_patients.append(patient)
+                    self.record_patient_process(patient)
 
             # Remove discharged patients from the active patient list
             for patient in discharged_patients:
