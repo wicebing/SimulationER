@@ -518,6 +518,7 @@ class ERSimulation:
             print(f"Shift {shift.name} ending at {self.current_time}.")
             logging.info(f"Shift {shift.name} ending at {self.current_time}.")
             patient_in_shift = [patient for patient in self.patients if patient.assigned_physician and patient.assigned_physician.shift_type == shift.name]
+            late_change_shift = []
             for patient in patient_in_shift:
                 off_physician = patient.assigned_physician
                 off_physician.energy = 180
@@ -538,7 +539,11 @@ class ERSimulation:
                 patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
                 print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
                 logging.info(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
-                patient.assigned_physician.shift_type = new_shift.name
+                
+                if patient.assigned_physician !=off_physician:
+                    patient.assigned_physician.shift_type = new_shift.name
+                else:
+                    late_change_shift.append([patient.assigned_physician,new_shift])
                 logging.info(f"Patient {patient.num}: {patient.assigned_physician.name}, shift:{patient.assigned_physician.shift_type}")
                 patient.bedsideVisit = 0
 
@@ -546,6 +551,9 @@ class ERSimulation:
                 self.record_patient_process(patient)
             if len(patient_in_shift)>0 and off_physician.shift_type == shift.name:
                 off_physician.shift_type = None
+            if len(list(set(late_change_shift)))>0:
+                for late_change in late_change_shift:
+                    late_change[0].shift_type = late_change[1].name
 
     def record_patient_process(self, patient):
         """
@@ -869,9 +877,10 @@ class ERSimulation:
         # Count the number of patients in each status
         status_counts = {status: sum(1 for p in physician_patients if p.status == status) for status in all_status}
         underTreat_count = sum(1 for p in physician_patients if p.underTreat > 0)
+        needAdm_count = sum(1 for p in physician_patients if p.need_admission)
         
-        print(f"Physician {physician.name} has {len(physician_patients)} patients. Status counts: {status_counts}. Number of patients with underTreat > 0: {underTreat_count}")
-        logging.info(f'physician {physician.name} has {len(physician_patients)} patients. Status counts: {status_counts}. Number of patients with underTreat > 0: {underTreat_count}')
+        print(f"Physician {physician.name} has {len(physician_patients)} patients. Status counts: {status_counts}. underTreat: {underTreat_count}. needAdm: {needAdm_count}")
+        logging.info(f'physician {physician.name} has {len(physician_patients)} patients. Status counts: {status_counts}. underTreat: {underTreat_count}. needAdm: {needAdm_count}')
 
         # Check if any patient is currently being visited by the physician
         visited_patient = next((p for p in physician_patients if p.bedsideVisit == 1), None)
@@ -882,7 +891,7 @@ class ERSimulation:
         else:
             status_weight = [1 if status_counts[status] > 0 else 0 for status in all_status]
             # Adjust the selection probability based on the physician's energy
-            weights = [*status_weight, max(physician.rest_tendency, physician.rest_tendency/(1+physician.energy))]  # Increasing the weight for 'rest' as energy decreases
+            weights = [*status_weight, min(physician.rest_tendency, physician.rest_tendency/(1+physician.energy))]  # Increasing the weight for 'rest' as energy decreases
             select_status = random.choices([*all_status, 'rest'], weights=weights, k=1)[0]
 
             potential_patients = [p for p in physician_patients if p.status == select_status]
@@ -951,7 +960,7 @@ class ERSimulation:
             visited_patient.underTreat += 10  # Increase by 10 for each minute the physician visits the patient
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
-            if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 50:
+            if visited_patient.need_admission == False and visited_patient.disease_blood/(1e-6+blood_reduction) > 10:
                 visited_patient.need_admission = True
 
         # If disease blood is 0 and departure blood is still positive, reduce it
