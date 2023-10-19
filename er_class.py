@@ -516,35 +516,35 @@ class ERSimulation:
         handoff_shifts = [shift for shift in self.shift_types if self.current_time.time() == shift.end_time]
         for shift in handoff_shifts:
             print(f"Shift {shift.name} ending at {self.current_time}.")
-            logging.info(f"Shift {shift.name} ending at {self.current_time}.")           
-            for patient in self.patients:
-                if patient.assigned_physician and patient.assigned_physician.shift_type == shift.name:
-                    off_physician = patient.assigned_physician
-                    off_physician.energy = 180
-                    off_physician.fatigue = 0
-                    # Determine the next shift based on the handoff rule
-                    new_shift = shift.get_handoff_shift(patient.arrival_time, self.current_time)
-                    
-                    # Find the physician for the new shift from the working schedule
-                    if new_shift.end_day_offset == 0:
+            logging.info(f"Shift {shift.name} ending at {self.current_time}.")
+            patient_in_shift = [patient for patient in self.patients if patient.assigned_physician and patient.assigned_physician.shift_type == shift.name]
+            for patient in patient_in_shift:
+                off_physician = patient.assigned_physician
+                off_physician.energy = 180
+                off_physician.fatigue = 0
+                # Determine the next shift based on the handoff rule
+                new_shift = shift.get_handoff_shift(patient.arrival_time, self.current_time)
+                
+                # Find the physician for the new shift from the working schedule
+                if new_shift.end_day_offset == 0:
+                    new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
+                else:
+                    if self.current_time.time() >= new_shift.start_time:
                         new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
                     else:
-                        if self.current_time.time() >= new_shift.start_time:
-                            new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
-                        else:
-                            new_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(new_shift.name)
-                    
-                    # Assign the new physician to the patient
-                    patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
-                    print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
-                    logging.info(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
-                    patient.assigned_physician.shift_type = new_shift.name
-                    logging.info(f"Patient {patient.num}: {patient.assigned_physician.name}, shift:{patient.assigned_physician.shift_type}")
-                    patient.bedsideVisit = 0
+                        new_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(new_shift.name)
+                
+                # Assign the new physician to the patient
+                patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
+                print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
+                logging.info(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
+                patient.assigned_physician.shift_type = new_shift.name
+                logging.info(f"Patient {patient.num}: {patient.assigned_physician.name}, shift:{patient.assigned_physician.shift_type}")
+                patient.bedsideVisit = 0
 
-                    logging.info(f"{off_physician.name} off, shift:{off_physician.shift_type}")
-                    self.record_patient_process(patient)
-            if off_physician.shift_type == shift.name:
+                logging.info(f"{off_physician.name} off, shift:{off_physician.shift_type}")
+                self.record_patient_process(patient)
+            if len(patient_in_shift)>0 and off_physician.shift_type == shift.name:
                 off_physician.shift_type = None
 
     def record_patient_process(self, patient):
@@ -951,7 +951,7 @@ class ERSimulation:
             visited_patient.underTreat += 10  # Increase by 10 for each minute the physician visits the patient
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
-            if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 70:
+            if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 50:
                 visited_patient.need_admission = True
 
         # If disease blood is 0 and departure blood is still positive, reduce it
@@ -1026,8 +1026,8 @@ def save_to_excel(data, filename):
 
 if __name__ == '__main__':
     er=ERSimulation("2023-03-01 08:00:00", 
-                    "2023-04-01 07:59:00", 
-                    300, 0.519, 
+                    "2023-04-01 07:59:00",
+                    250, 0.852, 
                     "settings/ersimulation_default.csv", 
                     'settings/admission_default.csv',
                     Simulate=False)
