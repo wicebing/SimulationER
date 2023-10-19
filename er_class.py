@@ -1026,7 +1026,7 @@ def save_to_excel(data, filename):
 
 if __name__ == '__main__':
     er=ERSimulation("2023-03-01 08:00:00", 
-                    "2023-03-06 07:59:00", 
+                    "2023-04-01 07:59:00", 
                     200, 0.8, 
                     "settings/ersimulation_default.csv", 
                     'settings/admission_default.csv',
@@ -1038,22 +1038,55 @@ if __name__ == '__main__':
     er.create_physician("DrD")
     er.create_physician("DrE")
     er.create_physician("DrF")
+    er.create_physician("DrG")
+    er.create_physician("DrH")
+    er.create_physician("DrI")
+    er.create_physician("DrJ")
+    er.create_physician("DrK")
+    er.create_physician("DrL")
+    er.create_physician("DrM")
+    er.create_physician("DrN")
+    er.create_physician("DrO")
+    er.create_physician("DrP")
+    er.create_physician("DrQ")
+    er.create_physician("DrR")
+    er.create_physician("DrS")
+    er.create_physician("DrT")
+    er.create_physician("DrU")
+    er.create_physician("DrV")
+    er.create_physician("DrW")
+    er.create_physician("DrX")
+    er.create_physician("DrY")
+    er.create_physician("DrZ")
 
     er.create_shift_type(name='a',start_time='08:00',end_time='20:00',recieve_patient_type=['med',], new_patient=True)
-    er.create_shift_type(name='b',start_time='08:00',end_time='20:00',recieve_patient_type=['med','trauma'], new_patient=True)
+    er.create_shift_type(name='b',start_time='08:00',end_time='20:00',recieve_patient_type=['med',], new_patient=True)
+    er.create_shift_type(name='c',start_time='08:00',end_time='20:00',recieve_patient_type=['med','trauma'], new_patient=True)
+    er.create_shift_type(name='ea',start_time='08:00',end_time='20:00',recieve_patient_type=['med','trauma'], new_patient=False)
+    er.create_shift_type(name='eb',start_time='08:00',end_time='20:00',recieve_patient_type=['med','trauma'], new_patient=False)
+    er.create_shift_type(name='d',start_time='14:00',end_time='21:30',recieve_patient_type=['med',], new_patient=True)
     er.create_shift_type(name='an',start_time='20:00',end_time='08:00',recieve_patient_type=['med','trauma'], new_patient=True)
-    er.create_shift_type(name='e',start_time='08:00',end_time='20:00',recieve_patient_type=['med','trauma'], new_patient=False)
+    er.create_shift_type(name='bn0',start_time='20:00',end_time='23:00',recieve_patient_type=['med','trauma'], new_patient=True)
+    er.create_shift_type(name='bn1',start_time='23:00',end_time='08:00',recieve_patient_type=['med','trauma'], new_patient=False)
+    er.create_shift_type(name='cn',start_time='20:00',end_time='08:00',recieve_patient_type=['med','trauma'], new_patient=True)
 
     er.shift_types[0].set_shift_rule(['an'],['an'],['an'])
-    er.shift_types[1].set_shift_rule(['an'],['an'],['an'])
-    er.shift_types[2].set_shift_rule(['e'],['a','b'])
-    er.shift_types[3].set_shift_rule(['an'],['an'],['an'])
+    er.shift_types[1].set_shift_rule(['bn0'],['bn0'],['bn0'])
+    er.shift_types[2].set_shift_rule(['cn'],['cn'],['cn'])
+    er.shift_types[3].set_shift_rule(['bn0'],['bn0','bn0'])
+    er.shift_types[4].set_shift_rule(['bn0'],['bn0'],['bn0'])
+    er.shift_types[5].set_shift_rule(['bn0'],['bn0'],['bn0'])
+    er.shift_types[6].set_shift_rule(['ea','eb'],['a'])
+    er.shift_types[7].set_shift_rule(['bn1'],['bn1'],['bn1'])
+    er.shift_types[8].set_shift_rule(['ea','eb'],['b'])
+    er.shift_types[9].set_shift_rule(['ea','eb'],['c'])
+
 
     er.create_working_schedule()
-    # er.save_working_schedule_to_csv()
+    er.save_working_schedule_to_csv()
 
     # input("Please complete the schedule CSV and press Enter to continue...")
-    er.load_working_schedule_from_csv()
+    er.load_working_schedule_from_csv(csv_file_path='./playGround/working_schedule_filled.csv')
     Patient.load_defaults_from_csv('./settings/patient_default.csv')
     
     er.start()
