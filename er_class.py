@@ -1027,7 +1027,7 @@ def save_to_excel(data, filename):
 if __name__ == '__main__':
     er=ERSimulation("2023-03-01 08:00:00", 
                     "2023-04-01 07:59:00", 
-                    200, 0.8, 
+                    300, 0.519, 
                     "settings/ersimulation_default.csv", 
                     'settings/admission_default.csv',
                     Simulate=False)
