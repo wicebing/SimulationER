@@ -409,6 +409,8 @@ class ERSimulation:
             for physician in current_physicians:
                 self.physician_treat_patient(physician)
 
+            self.ward_admission()
+
             for patient in self.patients:
                 self.record_patient_process(patient)
                 patient.update_blood_and_status(1, self.current_time)
@@ -416,37 +418,11 @@ class ERSimulation:
                     discharged_patients.append(patient)
                 self.record_patient_process(patient)
 
-            # Calculate possible admission patient number for the current time
-            current_day_str = self.current_time.strftime('%A')  # e.g., "Monday"
-            current_hour_str = f"{self.current_time.hour:02d}:00-{(self.current_time.hour) % 24:02d}:59"
-            key = f"{current_day_str}, {current_hour_str}"
-            mean_adm, std_adm = self.admission_count.get(key, (0, 0))
-            
-            # Calculate the average expected number of admissions for the current minute
-            hour_adm_amount = max(0, mean_adm + random.gauss(0, 1) * std_adm)
-            average_admissions_this_minute = hour_adm_amount / 60.0
-            # Use the Poisson distribution to get a random number of admissions for this minute
-            num_admissions = np.random.poisson(average_admissions_this_minute)  
-
-            needAdmission_patients = [p for p in self.patients if p.need_admission]
-            # If there are more patients needing admission than the number of admissions, randomly select patients to be admitted
-            if len(needAdmission_patients) > num_admissions:
-                patients_to_admit = random.sample(needAdmission_patients, num_admissions)
-            else:
-                patients_to_admit = needAdmission_patients
-            
-            if len(patients_to_admit) > 0:
-                for patient in patients_to_admit:
-                    patient.status = 'admission'
-                    patient.discharge_status = True
-                    print(f"Patient {patient.num} admitted at {self.current_time}.")
-                    logging.info(f"Patient {patient.num} admitted at {self.current_time}.")
-                    discharged_patients.append(patient)
-                    self.record_patient_process(patient)
-
             # Remove discharged patients from the active patient list
             for patient in discharged_patients:
                 self.record_patient_process(patient)
+                print(f"Patient {patient.num} discharged at {self.current_time}.")
+                logging.info(f"Patient {patient.num} discharged at {self.current_time}.")
                 self.patients.remove(patient)
                 del patient  # Explicitly delete the patient object
 
@@ -537,39 +513,39 @@ class ERSimulation:
 
     def check_shift_change_and_handoff(self):
         """Check if the current time matches any ShiftType end time and handle patient handoff."""
-        for shift in self.shift_types:
-            if self.current_time.time() == shift.end_time:  # Shift end time reached
-                print(f"Shift {shift.name} ending at {self.current_time}.")
-                logging.info(f"Shift {shift.name} ending at {self.current_time}.")           
-                for patient in self.patients:
-                    if patient.assigned_physician and patient.assigned_physician.shift_type == shift.name:
-                        off_physician = patient.assigned_physician
-                        off_physician.shift_type = None
-                        off_physician.energy = 180
-                        off_physician.fatigue = 0
-                        # Determine the next shift based on the handoff rule
-                        new_shift = shift.get_handoff_shift(patient.arrival_time, self.current_time)
-                        
-                        # Find the physician for the new shift from the working schedule
-                        if new_shift.end_day_offset == 0:
+        handoff_shifts = [shift for shift in self.shift_types if self.current_time.time() == shift.end_time]
+        for shift in handoff_shifts:
+            print(f"Shift {shift.name} ending at {self.current_time}.")
+            logging.info(f"Shift {shift.name} ending at {self.current_time}.")           
+            for patient in self.patients:
+                if patient.assigned_physician and patient.assigned_physician.shift_type == shift.name:
+                    off_physician = patient.assigned_physician
+                    off_physician.energy = 180
+                    off_physician.fatigue = 0
+                    # Determine the next shift based on the handoff rule
+                    new_shift = shift.get_handoff_shift(patient.arrival_time, self.current_time)
+                    
+                    # Find the physician for the new shift from the working schedule
+                    if new_shift.end_day_offset == 0:
+                        new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
+                    else:
+                        if self.current_time.time() >= new_shift.start_time:
                             new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
                         else:
-                            if self.current_time.time() >= new_shift.start_time:
-                                new_physician_name = self.working_schedule.get(self.current_time.date(), {}).get(new_shift.name)
-                            else:
-                                new_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(new_shift.name)
-                        
-                        # Assign the new physician to the patient
-                        patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
-                        print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
-                        logging.info(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
-                        patient.assigned_physician.shift_type = new_shift.name
-                        logging.info(f"Patient {patient.num}: {patient.assigned_physician.name}, shift:{patient.assigned_physician.shift_type}")
-                        patient.bedsideVisit = 0
-                        new_shift.recieve_patient_num =0
+                            new_physician_name = self.working_schedule.get(self.current_time.date() - timedelta(days=1), {}).get(new_shift.name)
+                    
+                    # Assign the new physician to the patient
+                    patient.assigned_physician = next((physician for physician in self.physicians if physician.name == new_physician_name), None)
+                    print(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
+                    logging.info(f"Patient {patient.num} assigned to {patient.assigned_physician.name} for {new_shift.name}.")
+                    patient.assigned_physician.shift_type = new_shift.name
+                    logging.info(f"Patient {patient.num}: {patient.assigned_physician.name}, shift:{patient.assigned_physician.shift_type}")
+                    patient.bedsideVisit = 0
 
-                        logging.info(f"{off_physician.name} off, shift:{off_physician.shift_type}")
-
+                    logging.info(f"{off_physician.name} off, shift:{off_physician.shift_type}")
+                    self.record_patient_process(patient)
+            if off_physician.shift_type == shift.name:
+                off_physician.shift_type = None
 
     def record_patient_process(self, patient):
         """
@@ -697,14 +673,16 @@ class ERSimulation:
             'triage': 0,
             'on-board': 0,
             'wait-depart': 0,
-            'underTreat': 0
+            'underTreat': 0,
+            'wait-admission': 0,
         } for shift in self.shift_types}
 
         total_er_dict = {
             'triage': 0,
             'on-board': 0,
             'wait-depart': 0,
-            'underTreat': 0
+            'underTreat': 0,
+            'wait-admission': 0,
         }
 
         # Iterating through each patient once
@@ -714,11 +692,15 @@ class ERSimulation:
                 shift_dicts[assigned_shift][patient.status] += 1
                 if patient.underTreat > 0:
                     shift_dicts[assigned_shift]['underTreat'] += 1
+                if patient.need_admission:
+                    shift_dicts[assigned_shift]['wait-admission'] += 1
 
             if patient.status in total_er_dict:
                 total_er_dict[patient.status] += 1
                 if patient.underTreat > 0:
                     total_er_dict['underTreat'] += 1
+                if patient.need_admission:
+                    total_er_dict['wait-admission'] += 1
 
         # Appending the current frame's data to the respective record lists
         for shift_name, counts in shift_dicts.items():
@@ -844,6 +826,11 @@ class ERSimulation:
                 print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}, but no available shifts for new patients.")
                 logging.info(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}, but no available shifts for new patients.")
                 continue
+            else:
+                new_shift_in = [shift for shift in current_shifts if self.current_time.time() == shift.start_time]
+                if new_shift_in:
+                    for shift in new_shift_in:
+                        shift.recieve_patient_num = 0
 
             # Count how many new patients each shift has received
             shift_counts = {shift: shift.recieve_patient_num for shift in current_shifts}
@@ -873,6 +860,7 @@ class ERSimulation:
             selected_shift.recieve_patient_num += 1
             print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type} and was assigned to {assigned_physician.name}.")
             logging.info(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type} and was assigned to {assigned_physician.name}.")
+            self.record_patient_process(patient)
 
     def physician_treat_patient(self, physician):
         all_status = ['triage', 'on-board', 'wait-depart']
@@ -963,7 +951,7 @@ class ERSimulation:
             visited_patient.underTreat += 10  # Increase by 10 for each minute the physician visits the patient
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
-            if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 150:
+            if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 70:
                 visited_patient.need_admission = True
 
         # If disease blood is 0 and departure blood is still positive, reduce it
@@ -978,14 +966,46 @@ class ERSimulation:
             visited_patient.status = 'on-board'
         if visited_patient.disease_blood <= 0:
             visited_patient.status = 'wait-depart'
+            visited_patient.need_admission = False
         if visited_patient.departure_blood <= 0:
             visited_patient.status = 'discharge'
             visited_patient.discharge_status = True
+            visited_patient.need_admission = False
         
         # If the patient's boarding blood has reduced to 0, set bedsideVisit back to 0
         if visited_patient.boarding_blood <= 0:
             visited_patient.bedsideVisit = 0
+        self.record_patient_process(visited_patient)
+
+    def ward_admission(self):
+        # Calculate possible admission patient number for the current time
+        current_day_str = self.current_time.strftime('%A')  # e.g., "Monday"
+        current_hour_str = f"{self.current_time.hour:02d}:00-{(self.current_time.hour) % 24:02d}:59"
+        key = f"{current_day_str}, {current_hour_str}"
+        mean_adm, std_adm = self.admission_count.get(key, (0, 0))
         
+        # Calculate the average expected number of admissions for the current minute
+        hour_adm_amount = max(0, mean_adm + random.gauss(0, 1) * std_adm)
+        average_admissions_this_minute = hour_adm_amount / 60.0
+        # Use the Poisson distribution to get a random number of admissions for this minute
+        num_admissions = np.random.poisson(average_admissions_this_minute)  
+
+        needAdmission_patients = [p for p in self.patients if p.need_admission and p.discharge_status == False]
+        # If there are more patients needing admission than the number of admissions, randomly select patients to be admitted
+        print(f"Number of patients needing admission: {len(needAdmission_patients)}. Number of admissions: {num_admissions}")
+        logging.info(f"Number of patients needing admission: {len(needAdmission_patients)}. Number of admissions: {num_admissions}")
+        if len(needAdmission_patients) > num_admissions:
+            patients_to_admit = random.sample(needAdmission_patients, num_admissions)
+        else:
+            patients_to_admit = needAdmission_patients
+        
+        if len(patients_to_admit) > 0:
+            for patient in patients_to_admit:
+                patient.status = 'admission'
+                self.record_patient_process(patient)
+                patient.discharge_status = True
+                print(f"Patient {patient.num} admitted at {self.current_time}.")
+                logging.info(f"Patient {patient.num} admitted at {self.current_time}.")
 
 
     # ... other methods to handle game mechanics
