@@ -133,15 +133,16 @@ class Patient:
                 logging.info(f"Patient {self.num} disease blood reduced by {blood_reduction} to {self.disease_blood} by {self.assigned_physician.name}.")             
 
         # Update patient's status based on blood values
-        if self.boarding_blood <= 0:
-            self.status = 'on-board'
-        if self.disease_blood <= 0:
-            self.status = 'wait-depart'
-            self.need_admission = False
-        if self.departure_blood <= 0:
-            self.status = 'discharge'
-            self.discharge_status = True
-            self.need_admission = False
+        if self.status != 'admission':
+            if self.boarding_blood <= 0:
+                self.status = 'on-board'
+            if self.disease_blood <= 0:
+                self.status = 'wait-depart'
+                self.need_admission = False
+            if self.departure_blood <= 0:
+                self.status = 'discharge'
+                self.discharge_status = True
+                self.need_admission = False
 
     @classmethod
     def load_defaults_from_csv(cls, csv_file_path):
@@ -551,7 +552,7 @@ class ERSimulation:
                 self.record_patient_process(patient)
             if len(patient_in_shift)>0 and off_physician.shift_type == shift.name:
                 off_physician.shift_type = None
-            if len(list(set(late_change_shift)))>0:
+            if len(late_change_shift)>0:
                 for late_change in late_change_shift:
                     late_change[0].shift_type = late_change[1].name
 
@@ -837,8 +838,13 @@ class ERSimulation:
             else:
                 new_shift_in = [shift for shift in current_shifts if self.current_time.time() == shift.start_time]
                 if new_shift_in:
+                    temp_shift_counts = {shift: shift.recieve_patient_num for shift in current_shifts}
+                    max_shift_count = max(temp_shift_counts.values())
                     for shift in new_shift_in:
-                        shift.recieve_patient_num = 0
+                        if self.current_time.time() == shift.start_time:
+                            shift.recieve_patient_num = 0
+                        else:
+                            shift.recieve_patient_num -= max_shift_count
 
             # Count how many new patients each shift has received
             shift_counts = {shift: shift.recieve_patient_num for shift in current_shifts}
@@ -891,7 +897,7 @@ class ERSimulation:
         else:
             status_weight = [1 if status_counts[status] > 0 else 0 for status in all_status]
             # Adjust the selection probability based on the physician's energy
-            weights = [*status_weight, min(physician.rest_tendency, physician.rest_tendency/(1+physician.energy))]  # Increasing the weight for 'rest' as energy decreases
+            weights = [*status_weight, physician.rest_tendency/(1+physician.energy)]  # Increasing the weight for 'rest' as energy decreases
             select_status = random.choices([*all_status, 'rest'], weights=weights, k=1)[0]
 
             potential_patients = [p for p in physician_patients if p.status == select_status]
@@ -951,7 +957,7 @@ class ERSimulation:
                 visited_patient.underTreat += 60  # Increase underTreat by 60 minutes when status becomes on-board
                 print(f'patient {visited_patient.num} status becomes on-board')
                 logging.info(f'patient {visited_patient.num} status becomes on-board')
-                if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 72:
+                if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 10:
                     visited_patient.need_admission = True
 
         # If underTreat is positive and disease blood is positive, reduce disease blood and increase underTreat
@@ -1036,7 +1042,7 @@ def save_to_excel(data, filename):
 if __name__ == '__main__':
     er=ERSimulation("2023-03-01 08:00:00", 
                     "2023-04-01 07:59:00",
-                    250, 0.852, 
+                    100, 0.852, 
                     "settings/ersimulation_default.csv", 
                     'settings/admission_default.csv',
                     Simulate=False)
