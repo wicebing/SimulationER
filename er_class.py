@@ -177,6 +177,7 @@ class Physician:
         
         if abilities is None:
             self.abilities = self.default_abilities()
+            # self.set_abilities_from_csv("./settings/physician_default.csv")
         else:
             self.abilities = abilities
         self.energy = energy  # Default energy is 100
@@ -188,17 +189,19 @@ class Physician:
     def default_abilities():
         abilities = {}
         hours = ["{:02d}:00-{:02d}:59".format(i, i) for i in range(24)]
+        med_mojo = max(4,random.gauss(6, 1))
+        trauma_mojo = max(6,random.gauss(6, 1))
         for hour in hours:
-            abilities[hour] = {'med': 5, 'trauma': 7}
+            abilities[hour] = {'med': med_mojo, 'trauma': trauma_mojo}
         return abilities
 
     def set_abilities_from_csv(self, csv_file_path):
         with open(csv_file_path, mode='r') as csv_file:
-            csv_reader = csv.reader(csv_file_path)
+            csv_reader = csv.reader(csv_file)
             next(csv_reader)  # Skip the header row
             for row in csv_reader:
                 hour, med_mojo, trauma_mojo = row
-                self.abilities[hour] = {'med': int(med_mojo), 'trauma': int(trauma_mojo)}
+                self.abilities[hour] = {'med': float(med_mojo), 'trauma': float(trauma_mojo)}
 
     def get_mojo(self, patient_type, current_time):
         """
@@ -814,7 +817,7 @@ class ERSimulation:
 
         new_shift_in = [shift for shift in nowall_shifts if self.current_time.time() == shift.start_time]
         if new_shift_in:
-            temp_shift_counts = {shift: shift.recieve_patient_num for shift in nowall_shifts}
+            temp_shift_counts = {shift: shift.recieve_patient_num for shift in nowall_shifts if shift not in new_shift_in}
             adjust_shift_count = min(temp_shift_counts.values())
             for shift in nowall_shifts:
                 if shift in new_shift_in:
@@ -971,7 +974,8 @@ class ERSimulation:
         # If underTreat is positive and disease blood is positive, reduce disease blood and increase underTreat
         elif visited_patient.underTreat > 0 and visited_patient.disease_blood > 0:
             visited_patient.disease_blood = max(0, visited_patient.disease_blood - blood_reduction)
-            visited_patient.underTreat += 10  # Increase by 10 for each minute the physician visits the patient
+            visited_patient.underTreat = visited_patient.underTreat + 10 if visited_patient.need_admission else visited_patient.underTreat + 120
+            # Increase by 10 for each minute the physician visits the patient
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             if visited_patient.need_admission == False and visited_patient.disease_blood/(1e-6+blood_reduction) > 10:
@@ -1050,11 +1054,12 @@ def save_to_excel(data, filename):
 if __name__ == '__main__':
     er=ERSimulation("2023-03-01 08:00:00", 
                     "2023-04-01 07:59:00",
-                    100, 0.852, 
+                    250, 0.852, 
                     "settings/ersimulation_default.csv", 
                     'settings/admission_default.csv',
                     Simulate=False)
     er.set_time_speed(4)
+    # er.create_physicians_from_csvs('./settings/physicians')
     er.create_physician("DrA")
     er.create_physician("DrB")
     er.create_physician("DrC")
