@@ -643,7 +643,7 @@ class ERSimulation:
                             # Update metrics for both total and the respective patient type
                             for key in ['total', current_type]:
                                 # Check for new arrivals
-                                if record['Arrival_time'] == timestamp and record['Assigned_physician'] == physician_name:
+                                if record['Arrival_time'] == timestamp and record['Assigned_physician'] == physician_name and record['Status'] == 'triage':
                                     metrics[key]['new_arrivals'] += 1
                                 # Check for handoffs received by this physician
                                 if i != 0 and records[i-1]['Assigned_physician'] != physician_name and record['Assigned_physician'] == physician_name:
@@ -808,6 +808,22 @@ class ERSimulation:
         self.shift_types.append(shift_type)
 
     def patient_arrival(self):
+        nowall_shifts = [shift for shift in self.shift_types 
+                        if shift.new_patient 
+                        and shift.is_time_within_shift(self.current_time.time())]
+
+        new_shift_in = [shift for shift in nowall_shifts if self.current_time.time() == shift.start_time]
+        if new_shift_in:
+            temp_shift_counts = {shift: shift.recieve_patient_num for shift in nowall_shifts}
+            adjust_shift_count = min(temp_shift_counts.values())
+            for shift in nowall_shifts:
+                if shift in new_shift_in:
+                    logging.info(f"Shift {shift.name} starting at {self.current_time}.")
+                    continue
+                logging.info(f'Patient number in {shift.name} from {shift.recieve_patient_num} - {adjust_shift_count}')
+                shift.recieve_patient_num -= adjust_shift_count
+                logging.info(f'Patient number in {shift.name} to {shift.recieve_patient_num}')
+
         current_hour_str = f"{self.current_time.hour:02d}:00-{(self.current_time.hour) % 24:02d}:59"
         mean_patients, std_patients = self.hourly_range.get(current_hour_str, (0, 0))
 
@@ -835,19 +851,11 @@ class ERSimulation:
                 print(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}, but no available shifts for new patients.")
                 logging.info(f"Patient {patient.num} arrived at {patient.arrival_time} with type {patient.patient_type}, but no available shifts for new patients.")
                 continue
-            else:
-                new_shift_in = [shift for shift in current_shifts if self.current_time.time() == shift.start_time]
-                if new_shift_in:
-                    temp_shift_counts = {shift: shift.recieve_patient_num for shift in current_shifts}
-                    max_shift_count = max(temp_shift_counts.values())
-                    for shift in new_shift_in:
-                        if self.current_time.time() == shift.start_time:
-                            shift.recieve_patient_num = 0
-                        else:
-                            shift.recieve_patient_num -= max_shift_count
 
             # Count how many new patients each shift has received
             shift_counts = {shift: shift.recieve_patient_num for shift in current_shifts}
+            shiftN_counts = {shift.name: shift.recieve_patient_num for shift in current_shifts}
+            logging.info(f"Shift counts: {shiftN_counts}")
 
             # Find the shift with the least number of new patients
             min_count = min(shift_counts.values())
