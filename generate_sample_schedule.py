@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import random
 
 # Load the working_schedule CSV
 schedule_df = pd.read_csv("./playGround/working_schedule.csv")
@@ -18,13 +19,17 @@ SHIFT_END_TIMES = {
 }
 
 # Define a function to get the next physician ensuring they rest for at least 8 hours
-def get_next_physician(current_physician, last_assigned, shift_end_times, shift_start_time):
-    index = PHYSICIANS.index(current_physician)
-    while True:
-        index = (index + 1) % len(PHYSICIANS)
-        next_physician = PHYSICIANS[index]
-        if next_physician not in last_assigned or (shift_end_times.get(last_assigned[next_physician], "00:00") <= shift_start_time):
+def get_next_physician(current_physician, last_shift_end_times, shift_start_time):
+    # Create a copy of the physicians list and shuffle it for randomness
+    shuffled_physicians = PHYSICIANS.copy()
+    random.shuffle(shuffled_physicians)
+    
+    for next_physician in shuffled_physicians:
+        last_shift_end_time = last_shift_end_times.get(next_physician, "00:00")
+        hours_since_last_shift = (pd.Timestamp(shift_start_time) - pd.Timestamp(last_shift_end_time)).seconds / 3600
+        if hours_since_last_shift >= 8:
             return next_physician
+    return None
 
 # Update the working schedule using the constraints provided
 last_assigned = {}  # Track the last shift a physician was assigned to
@@ -45,19 +50,24 @@ current_physician = "DrZ"
 
 for _, row in schedule_df.iterrows():
     day_schedule = {'Date': row['Date']}
+    physicians_for_the_day = []  # Keep track of physicians assigned for the day to avoid duplicates
+    
     for shift in SHIFT_TYPES:
         # If the shift type is 'bn1', assign the same physician as 'bn0'
         if shift == 'bn1':
             day_schedule[shift] = day_schedule['bn0']
-        else:
-            # Find next available physician for this shift
-            while True:
-                current_physician = get_next_physician(current_physician, last_assigned, shift_end_times, SHIFT_START_TIMES[shift])
-                if can_assign_physician_to_shift(current_physician, shift, last_shift_end_times):
-                    break
-            day_schedule[shift] = current_physician
-            last_assigned[shift] = current_physician
-            last_shift_end_times[current_physician] = SHIFT_END_TIMES[shift]
+            continue
+        
+        # Find next available physician for this shift
+        while True:
+            current_physician = get_next_physician(None, last_shift_end_times, SHIFT_START_TIMES[shift])
+            if current_physician and current_physician not in physicians_for_the_day:
+                break
+        
+        day_schedule[shift] = current_physician
+        physicians_for_the_day.append(current_physician)
+        last_shift_end_times[current_physician] = SHIFT_END_TIMES[shift]
+        
     schedule_filled_data.append(day_schedule)
 
 # Convert the filled schedule to DataFrame

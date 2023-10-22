@@ -99,10 +99,10 @@ class Patient:
         default_departure_blood = Patient.DEFAULT_BLOOD_VALUES[day_of_week][hour_of_day][patient_type]['departure']
         default_increase_rate = Patient.DEFAULT_DISEASE_INCREASE_RATES[day_of_week][hour_of_day][patient_type]
 
-        self.boarding_blood = boarding_blood or max(10,int(random.gauss(default_boarding_blood, 20)))
-        self.disease_blood = disease_blood or max(50,int(random.gauss(default_disease_blood, 200)))
-        self.departure_blood = departure_blood or max(5,int(random.gauss(default_departure_blood, 5)))
-        self.disease_increase_rate = max(1,int(random.gauss(default_increase_rate, 2)))
+        self.boarding_blood = boarding_blood or max(10,int(random.gauss(default_boarding_blood, default_boarding_blood/2)))
+        self.disease_blood = disease_blood or max(50,int(random.gauss(default_disease_blood, default_disease_blood/2)))
+        self.departure_blood = departure_blood or max(5,int(random.gauss(default_departure_blood, default_departure_blood/2)))
+        self.disease_increase_rate = max(0,int(10*random.gauss(default_increase_rate, 2))/10)
 
         self.status = 'triage'
         self.discharge_status = False
@@ -189,8 +189,8 @@ class Physician:
     def default_abilities():
         abilities = {}
         hours = ["{:02d}:00-{:02d}:59".format(i, i) for i in range(24)]
-        med_mojo = max(4,random.gauss(6, 1))
-        trauma_mojo = max(6,random.gauss(6, 1))
+        med_mojo = int(100*max(3,random.gauss(9, 2)))/100
+        trauma_mojo = int(100*max(3,random.gauss(9, 2)))/100
         for hour in hours:
             abilities[hour] = {'med': med_mojo, 'trauma': trauma_mojo}
         return abilities
@@ -968,17 +968,17 @@ class ERSimulation:
                 visited_patient.underTreat += 60  # Increase underTreat by 60 minutes when status becomes on-board
                 print(f'patient {visited_patient.num} status becomes on-board')
                 logging.info(f'patient {visited_patient.num} status becomes on-board')
-                if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 10:
+                if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 50:
                     visited_patient.need_admission = True
 
         # If underTreat is positive and disease blood is positive, reduce disease blood and increase underTreat
         elif visited_patient.underTreat > 0 and visited_patient.disease_blood > 0:
             visited_patient.disease_blood = max(0, visited_patient.disease_blood - blood_reduction)
-            visited_patient.underTreat = visited_patient.underTreat + 10 if visited_patient.need_admission else visited_patient.underTreat + 120
+            visited_patient.underTreat = visited_patient.underTreat + 720 if visited_patient.need_admission else visited_patient.underTreat + 10
             # Increase by 10 for each minute the physician visits the patient
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
-            if visited_patient.need_admission == False and visited_patient.disease_blood/(1e-6+blood_reduction) > 10:
+            if visited_patient.need_admission == False and visited_patient.disease_blood/(1e-6+blood_reduction) > 50:
                 visited_patient.need_admission = True
 
         # If disease blood is 0 and departure blood is still positive, reduce it
@@ -1053,7 +1053,7 @@ def save_to_excel(data, filename):
 
 if __name__ == '__main__':
     er=ERSimulation("2023-03-01 08:00:00", 
-                    "2023-04-01 07:59:00",
+                    "2023-06-01 07:59:00",
                     250, 0.852, 
                     "settings/ersimulation_default.csv", 
                     'settings/admission_default.csv',
