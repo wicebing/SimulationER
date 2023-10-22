@@ -968,7 +968,7 @@ class ERSimulation:
                 visited_patient.underTreat += 60  # Increase underTreat by 60 minutes when status becomes on-board
                 print(f'patient {visited_patient.num} status becomes on-board')
                 logging.info(f'patient {visited_patient.num} status becomes on-board')
-                if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 50:
+                if visited_patient.need_admission == False and visited_patient.disease_blood/(1+blood_reduction) > 30:
                     visited_patient.need_admission = True
 
         # If underTreat is positive and disease blood is positive, reduce disease blood and increase underTreat
@@ -978,7 +978,7 @@ class ERSimulation:
             # Increase by 10 for each minute the physician visits the patient
             print(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
             logging.info(f'physician {physician.name} is treating patient {visited_patient.num}, decrease disease blood by {blood_reduction} and increase underTreat by 10')
-            if visited_patient.need_admission == False and visited_patient.disease_blood/(1e-6+blood_reduction) > 50:
+            if visited_patient.need_admission == False and visited_patient.disease_blood/(1e-6+blood_reduction) > 30:
                 visited_patient.need_admission = True
 
         # If disease blood is 0 and departure blood is still positive, reduce it
